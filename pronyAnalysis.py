@@ -1,6 +1,10 @@
 import numpy as np
 from statsmodels.tsa.ar_model import AutoReg as AR
 import scipy
+import matplotlib
+from matplotlib import pyplot as plt
+from scipy.signal import hilbert
+import signalModeling as SM
 
 
 def awgn(signal, SNRdB=None, SNRlin=None, sigPower=None):
@@ -63,6 +67,7 @@ def getSimilarsByDistance(signal, tolerance=0, maxSimilarNumber=np.Inf):
 
 def windowing(x, fftsize=1024, overlap=4, returnShortSignal=True, joinLastSample=False, dtype=None):
     hop = int(fftsize * (100 - overlap)/100)
+    hop = max(hop, 1)
     signal = np.array([x[i:i+fftsize] for i in range(0, len(x)-fftsize, hop)], dtype=dtype)
     if returnShortSignal and signal.size == 0:
         signal = np.zeros((1, x.size), dtype=dtype)
@@ -215,7 +220,9 @@ def windMEXH(centrFreq, t, formFactor, carr=False):
     return psi, wind
 
 
-def wavSpectrum(psi, rect=False, level=0, fVectIni=None, Fs=1):
+def wavSpectrum(psi, rect=0, level=0, fVectIni=None, Fs=1):
+# rect = 0 -> complex window; rect > 0 and level > 0 -> drop low coefficients;
+# rect == 2 -> real coefficients window to avoid phase distortions; rect == 3 -> rectangular real spectral window.
     if fVectIni is None:
         fVectIni = np.fft.rfftfreq(psi.size, 1 / Fs)
     windSpecSided = np.fft.rfft(psi)/psi.size
@@ -228,11 +235,32 @@ def wavSpectrum(psi, rect=False, level=0, fVectIni=None, Fs=1):
         zeroIndexes = np.array(np.nonzero(np.abs(windSpec) < level))
         if zeroIndexes.size:
             windSpec[zeroIndexes] = 0
+        if rect == 3:
+            windSpec[windSpec>0] = 1
+    if rect == 2:
+        windSpec = np.abs(windSpec) + 0j
 
     return windSpec, freqz, supportIndexes, supportFreqs
 
 
-def DFTbank(signal, Fs=1, df=None, fVectIni=None, rect=False, level=0.5, formFactor=16):
+def mirrorExtendIndexes(signal, mirrorLen=0):
+    num = np.arange(start=signal.size*mirrorLen+1, stop=0, step=-1, dtype='int')
+    numEnd = np.arange(start=signal.size-2, stop=signal.size*(1-mirrorLen)-1, step=-1, dtype='int')
+    return num, numEnd
+
+
+def mirrorExtend(signal, mirrorLen=0):
+    if mirrorLen:
+        (num, numEnd) = mirrorExtendIndexes(signal, mirrorLen=mirrorLen)
+        signal = np.hstack((signal[num], signal, signal[numEnd]))
+    else:
+        num=0
+        numEnd=signal.size-2
+    return signal, num, numEnd
+
+
+def DFTbank(signal, Fs=1, df=None, fVectIni=None, rect=0, level=0.5, mirrorLen=0, freqLims=None, formFactor=16):
+    (signal, num, numEnd) = mirrorExtend(signal, mirrorLen=mirrorLen)
     dt = 1/Fs
     t = np.arange(0, signal.size*dt, dt)
     # Get frequency vector for decomposition
@@ -240,10 +268,19 @@ def DFTbank(signal, Fs=1, df=None, fVectIni=None, rect=False, level=0.5, formFac
         df = Fs/100  # 1/Fs
     if not fVectIni:
         fVectIni = np.fft.rfftfreq(signal.size, 1 / Fs)
-    fVect = fVectIni[np.arange(start=0, stop=Fs/2, step=df, dtype='int')]
+    fVect = np.unique(SM.closeInVect(fVectIni, np.arange(start=0, stop=Fs / 2, step=df))[0])
+    if not freqLims is None:
+        fVect = fVect[fVect<freqLims[-1]]
+        if len(freqLims) == 2:
+            fVect = fVect[fVect > freqLims[0]]
     spec = np.fft.rfft(signal) / signal.size  # Get one-sided FFT
-    representation = np.zeros((fVect.size, signal.size))  # Columls are freqs, rows are time coefficients.
-    for ai in range(1, fVect.size):
+    representation = np.zeros((fVect.size, signal.size))  # Columns are freqs, rows are time coefficients.
+    if fVect[0] == 0:  # Consider zero frequency.
+        start=1
+        representation[0, :] += np.mean(signal)
+    else:
+        start=0
+    for ai in range(start, fVect.size):
         # Obtain analysis window and it's width
         psi = windMEXH(fVect[ai], t, formFactor)[0]
         (windSpec, freqz) = wavSpectrum(psi, rect=rect, level=level, fVectIni=fVectIni, Fs=Fs)[0:2]
@@ -256,7 +293,9 @@ def DFTbank(signal, Fs=1, df=None, fVectIni=None, rect=False, level=0.5, formFac
         windSpec[np.arange(start=stopIdx, stop=windSpec.size, step=1, dtype='int')] = 0
         representation[ai, :] = np.fft.irfft(windSpec[np.arange(start=startIdx, stop=stopIdx, step=1, dtype='int')])*t.size
 
-    representation[0, :] += np.mean(signal)
+    if mirrorLen:
+        representation = representation[:, num[0]:numEnd[0]+num[0]+2]
+
     return representation, t, fVect
 
 
@@ -336,7 +375,7 @@ def timeSegmentedProny(signal, Fs=1, percentLength=10, samplesLenWin=None, perce
     return alpha, f, A, theta, resid, coefficient
 
 
-def thresholdRepreProny(representation, fVect, Fs=1, percentLength=5, percentOverlap=50, lowFreq=90, highFreq=210, hold=1, useChirp=False, order=2):
+def thresholdRepreProny(representation, fVect, Fs=1, percentLength=5, percentOverlap=50, periodsNum=None, mirrorLen=0, errorThresh=None, lowFreq=90, highFreq=210, hold=1, useChirp=False, order=2):
     dt = 1/Fs
     t = np.arange(start=0, stop=representation.shape[1]*dt, step=dt)
     f = np.zeros_like(t)
@@ -351,6 +390,8 @@ def thresholdRepreProny(representation, fVect, Fs=1, percentLength=5, percentOve
 
     for ai in range(0, fVectCut.size):
         frInd = fVectCut[ai] == fVect
+        if periodsNum:
+            samplesLenWin = np.round(1/fVectCut[ai]/dt*periodsNum)
         currHold = rms(representation[frInd, :])*hold
         timeIndexes = np.nonzero(representation[frInd, :]>=currHold)
         if  timeIndexes[1].size<10:
@@ -382,4 +423,25 @@ def thresholdRepreProny(representation, fVect, Fs=1, percentLength=5, percentOve
             #theta[appropriateIdxs] = thetaCurr[1]
             resid[appropriateIdxs] = residCurr[0, bi]
             coefficient[appropriateIdxs] = coefficientCurr[0, bi]
+
+    if errorThresh:
+        holdErr = errorThresh*np.min(resid)
+        dropIndexes = np.hstack(np.nonzero(resid>holdErr))
+        resid[dropIndexes] = np.inf
+        f[dropIndexes] = 0
+        alpha[dropIndexes] = 0
+
     return alpha, f, A, theta, resid, coefficient
+
+
+def representationTrack(representation, fVect):
+    instFreq = np.zeros_like(representation[0, :])
+    representationEnv = np.zeros_like(representation)
+    # Get envelope along each frequency to define the most prominent time-frequency regions.
+    for ai in range(representation[:, 0].size):
+        representationEnv[ai, :] = np.abs(hilbert(representation[ai, :]))
+    for ai in range(instFreq.size):
+        freqInd = np.argmax(representationEnv[:, ai])
+        instFreq[ai] = fVect[freqInd]
+    return instFreq
+

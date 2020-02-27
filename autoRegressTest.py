@@ -66,7 +66,7 @@ if plotGraphs:
     matplotlib.pyplot.specgram(signal, Fs = Fs)
     fig2.show()
 
-    (representation, t, fVectNew) = pa.DFTbank(signal, rect=1, level=0.2, Fs=Fs, df=1, formFactor=1024)
+    (representation, t, fVectNew) = pa.DFTbank(signal, rect=2, level=0.2, Fs=Fs, df=1, formFactor=1024)
     #(alpha1, f1, A1, theta1, resid1, coefficient1) = pa.timeSegmentedProny(representation[110, :], order=4, Fs=Fs, percentLength=2.5, percentOverlap=50)
     #(alpha, f, A, theta, resid, coefficient) = pa.timeSegmentedProny(representation[90, :], order=4, Fs=Fs, percentLength=2.5, percentOverlap=50)
 

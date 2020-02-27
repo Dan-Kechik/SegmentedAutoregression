@@ -41,10 +41,10 @@ plt.plot(t, cmp)
 fig.show()
 '''''
 
-percentLength = 10
+percentLength = 5
 percentOverlap = 50
 coefficients = np.array([0, 0.1, 0.2, 0.3])
-SNRs = np.arange(start=-15, stop=-50, step=-1, dtype='float64')  # np.array([3., 0., -3., -6, -10., -12])
+SNRs = np.arange(start=10, stop=-31, step=-1, dtype='float64')  # np.array([3., 0., -3., -6, -10., -12])
 distances = np.arange(start=10, stop=3, step=-1)
 experiences=100
 totHarmResid = []
@@ -52,10 +52,10 @@ totNoisResid = []
 totDF = []
 totDF2 = []
 
-fig = plt.figure(figsize=(8, 8))  # fig = []  # v0.1
+fig = plt.figure(figsize=(8, 6))  # fig = []  # v0.1
 grid1 = matplotlib.gridspec.GridSpec(1, 1)
 ax_Resid = fig.add_subplot(grid1[0])
-fig2 = plt.figure(figsize=(8, 8))  # fig2 = []
+fig2 = plt.figure(figsize=(8, 6))  # fig2 = []
 grid2 = matplotlib.gridspec.GridSpec(1, 1)
 ax_FreqDev = fig2.add_subplot(grid2[0])
 linestyles = ('-', '--', ':', '-.')
@@ -76,7 +76,7 @@ for ai in range(coefficients.size):
         for ci in range(experiences):
             signal = chirp(t, freq[0, 0], t[-1], freq[0, -1])
             #(alpha, f, A, theta, resid, coefficient) = pa.timeSegmentedProny(signal, Fs=Fs, percentLength=10, percentOverlap=50, order=2)
-            signal = pa.awgn(signal, SNRdB=-10)[0]
+            (signal, noise) = pa.awgn(signal, SNRdB=SNRs[bi])[0:2]
             spec = np.fft.rfft(signal) / signal.size
             spec[fVect < 95] = 0  # freq[0, 0] * 0.95
             spec[fVect > 135] = 0  # freq[0, -1] * 1.05
@@ -85,9 +85,9 @@ for ai in range(coefficients.size):
             fTemp = np.array(f)[:, 1]
             dF[bi] += pa.rms(fOrig-fTemp)
             harmDisp += np.std(fTemp)
-            spec2 = np.fft.rfft(signal) / signal.size
-            spec2[fVect < 135] = 0  # freq[0, 0] * 0.95
-            spec2[fVect > 175] = 0  # freq[0, -1] * 1.05
+            spec2 = np.fft.rfft(noise) / noise.size
+            spec2[fVect < 95] = 0  # freq[0, 0] * 0.95
+            spec2[fVect > 135] = 0  # freq[0, -1] * 1.05
             cmp2 = np.fft.irfft(spec2) * spec2.size * 2
             (alpha1, f1, A1, theta1, resid1, coefficient1) = pa.timeSegmentedProny(cmp2, Fs=Fs, percentLength=percentLength, percentOverlap=percentOverlap, order=2)
             harmResid[bi] += np.mean(resid)
@@ -189,4 +189,6 @@ for ai in range(coefficients.size):
     plt.title('Коэффициент нарастания частоты {}'.format(coefficients[ai]))
     '''''
 
+noiseResids = np.mean(np.hstack(totNoisResid))
+print('Noise residues: {}'.format(totNoisResid))
 pass
