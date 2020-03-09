@@ -5,6 +5,7 @@ import matplotlib
 from matplotlib import pyplot as plt
 from scipy.signal import hilbert
 import signalModeling as SM
+from numba import jit
 
 
 def awgn(signal, SNRdB=None, SNRlin=None, sigPower=None):
@@ -208,7 +209,9 @@ def chirpProny(signal, order=2, epsilon=0, Fs=1, step=0, limit=0):
     return alpha, f, A, theta, resid, coefficient
 
 
-def rms(signal):
+def rms(signal, omitnan=True):
+    if omitnan:
+        signal = signal[np.isnan(signal) == False]
     return np.sqrt(np.sum(signal**2)/signal.size)
 
 
@@ -259,7 +262,7 @@ def mirrorExtend(signal, mirrorLen=0):
     return signal, num, numEnd
 
 
-def DFTbank(signal, Fs=1, df=None, fVectIni=None, rect=0, level=0.5, mirrorLen=0, freqLims=None, formFactor=16):
+def DFTbank(signal, Fs=1, df=None, fVectIni=None, rect=0, level=0.5, mirrorLen=0, freqLims=None, formFactor=16, **kwargs):
     (signal, num, numEnd) = mirrorExtend(signal, mirrorLen=mirrorLen)
     dt = 1/Fs
     t = np.arange(0, signal.size*dt, dt)
@@ -297,6 +300,15 @@ def DFTbank(signal, Fs=1, df=None, fVectIni=None, rect=0, level=0.5, mirrorLen=0
         representation = representation[:, num[0]:numEnd[0]+num[0]+2]
 
     return representation, t, fVect
+
+
+def scalogramFromRepresentation(representation, fVect=(-1,), firstDC=False):
+    scalogram = np.zeros((representation.shape[0], 1), dtype='float64')
+    for ai in range(scalogram.size):
+        scalogram[ai] = np.std(representation[ai, :])
+    if firstDC or fVect[0] == 0:
+        scalogram[0] = representation[0, 0]
+    return scalogram
 
 
 def segmentedProny(signal, Fs=1, percentLength=10, percentOverlap=95, freqLengthHz=5, freqOverlapHz=0, order=2, lowFreq=90, highFreq=210):
@@ -375,7 +387,7 @@ def timeSegmentedProny(signal, Fs=1, percentLength=10, samplesLenWin=None, perce
     return alpha, f, A, theta, resid, coefficient
 
 
-def thresholdRepreProny(representation, fVect, Fs=1, percentLength=5, percentOverlap=50, periodsNum=None, mirrorLen=0, errorThresh=None, lowFreq=90, highFreq=210, hold=1, useChirp=False, order=2):
+def thresholdRepreProny(representation, fVect, Fs=1, percentLength=5, percentOverlap=50, periodsNum=None, powerNorm=0, lowFreq=90, highFreq=210, hold=1, useChirp=False, order=2, **kwargs):
     dt = 1/Fs
     t = np.arange(start=0, stop=representation.shape[1]*dt, step=dt)
     f = np.zeros_like(t)
@@ -384,12 +396,38 @@ def thresholdRepreProny(representation, fVect, Fs=1, percentLength=5, percentOve
     theta = np.zeros_like(t)
     resid = np.ones_like(t)*np.inf
     coefficient = np.zeros_like(t)
-    fVectCut = fVect[np.logical_and(fVect>=lowFreq, fVect<=highFreq)]
+    (lowFreq, highFreq) = kwargs.get('roughFreqs', (lowFreq, highFreq))
+    fVectCut = kwargs.get('fVectCut', fVect[np.logical_and(fVect>=lowFreq, fVect<=highFreq)])
     # Window length is assigned in percents of the whole signal.
     samplesLenWin = np.round(t.size*percentLength/100)
 
+    """""
+    ???
+    fRough = kwargs.get('fRough', [])
+    if len(fRough) > 0:
+        # Limit frequencies for analysing.
+        lims = kwargs.get('roughFreqs', fVect)
+        fRough[fRough<lims[0]] = lims[0]
+        if len(lims) > 1:
+            fRough[fRough > lims[0]] = lims[-1]
+        # Check track frequencies are in the representation frequency vector.
+        if not any(np.isinf(fVect)):
+            fRough = SM.closeInVect(fVect, fRough)
+    """""
+
+    """""
+    fig = plt.figure(figsize=(8, 6))
+    grid = matplotlib.gridspec.GridSpec(1, 1)
+    ax_F = fig.add_subplot(grid[0])
+    ax_F.grid()
+    ax_Err = ax_F.twinx()
+    ax_Err.ticklabel_format(axis='y', style='sci', scilimits=(0, 0))
+    fig.show()
+    cmap1 = plt.cm.get_cmap('magma', fVectCut.size)
+    """""
+
     for ai in range(0, fVectCut.size):
-        frInd = fVectCut[ai] == fVect
+        (fCur, frInd) = SM.closeInVect(fVect, fVectCut[ai])
         if periodsNum:
             samplesLenWin = np.round(1/fVectCut[ai]/dt*periodsNum)
         currHold = rms(representation[frInd, :])*hold
@@ -398,18 +436,25 @@ def thresholdRepreProny(representation, fVect, Fs=1, percentLength=5, percentOve
             continue
         timeIndexes = np.arange(start=timeIndexes[1][0], stop=timeIndexes[1][-1], step=1, dtype='int')
         signal = representation[frInd, timeIndexes].transpose()
+        if powerNorm:
+            signal *= powerNorm/(np.sum(signal**2)/signal.size)
         # Get time indexes windows to situate obtained values.
         tWinIndexes = windowing(timeIndexes, int(samplesLenWin), percentOverlap, dtype='int')[0]
+        # Take only indexes crossed with unestimated regions if the current frequency is not included in track.???
         (alphaCurr, fCurr, Acurr, thetaCurr, residCurr, coefficientCurr) = timeSegmentedProny(signal,
               Fs=Fs, samplesLenWin=samplesLenWin, percentOverlap=percentOverlap, order=order, useChirp=useChirp)
-        '''''
-        if useChirp:
-            (alphaCurr, fCurr, Acurr, thetaCurr, residCurr, coefficientCurr) = chirpProny(signal, Fs=Fs, order=order, step=0.05, limit=0.9)
-        else:
-            (alphaCurr, fCurr, Acurr, thetaCurr, ar_res) = pronyDecomp(signal, order, Fs=Fs)
-            residCurr = np.sum(ar_res.bse ** 2)
-            coefficientCurr = 0
-        '''''
+
+        """""
+        win1 = []
+        for di in range(len(tWinIndexes)):
+            win1.append(tWinIndexes[di][0])
+
+        tw = t[np.array(win1)]
+        ax_F.plot(tw, fCurr[:, 1], color=cmap1(ai))
+        ax_Err.plot(tw, residCurr.transpose(), linestyle=':', color=cmap1(ai), label='f0 = {}'.format(fVectCut[ai]))
+        ax_Err.legend()
+        """""
+
         fCurr = np.array(fCurr)
         alphaCurr = np.array(alphaCurr)
         residCurr = residCurr.transpose()
@@ -417,21 +462,125 @@ def thresholdRepreProny(representation, fVect, Fs=1, percentLength=5, percentOve
         for bi in range(tWinIndexes.shape[0]):
             currIdxs = tWinIndexes[bi, :]
             appropriateIdxs = currIdxs[resid[currIdxs]>residCurr[0, bi]]
+            if kwargs.get('centralFreq', False):
+                fCurr[bi, 1] = fVectCut[ai]
             f[appropriateIdxs] = fCurr[bi, 1]
             alpha[appropriateIdxs] = alphaCurr[bi, 1]
             #A[appropriateIdxs] = Acurr[1]
             #theta[appropriateIdxs] = thetaCurr[1]
             resid[appropriateIdxs] = residCurr[0, bi]
             coefficient[appropriateIdxs] = coefficientCurr[0, bi]
+        pass
 
-    if errorThresh:
-        holdErr = errorThresh*np.min(resid)
-        dropIndexes = np.hstack(np.nonzero(resid>holdErr))
-        resid[dropIndexes] = np.inf
-        f[dropIndexes] = 0
-        alpha[dropIndexes] = 0
+    result = alpha, f, A, theta, resid, coefficient
+    errorThresh = kwargs.get('errorThresh', np.inf)
+    dummyVal = kwargs.get('dummyVal')
+    diffHold = kwargs.get('diffHold')
+    for ai in range(len(result)):
+        holdErr = errorThresh*np.median(resid)
+        dropIndexes = np.hstack(np.nonzero(resid >= holdErr))
+        if not dummyVal is None:
+            result[ai][dropIndexes] = dummyVal
+            if not diffHold is None:
+                diffHoldTemp = diffHold*np.mean(np.diff(resid[resid<holdErr]))
+                dropIndexes = diffThreshold(result[ai], diffHoldTemp, dummyValue=result[ai][0])
+                result[ai][dropIndexes] = dummyVal
 
-    return alpha, f, A, theta, resid, coefficient
+    return result
+
+
+def pronyParamsEst(signal, **kwargs):
+    Fs = kwargs.get('Fs', 1)
+    formFactor = kwargs.get('formFactor', 1024)
+    formFactorCurr = formFactor[0] if type(formFactor) in [tuple, list] else formFactor
+    iterations = kwargs.get('iterations', 0)
+    (lowFreq, highFreq) = kwargs.get('roughFreqs', (kwargs.get('lowFreq', 70), kwargs.get('highFreq', 150)))
+    if kwargs.get('roughFreqs', 0) and iterations:  # Get preliminary track to estimate frequency borders.
+        # ///Pitch detection and rough estimation///
+        (representation, t0, fVectNew) = DFTbank(signal, rect=2, level=0.2, Fs=Fs, mirrorLen=0.15, df=1,
+                                                    freqLims=(50, 200), formFactor=formFactorCurr)
+        (alpha, f, A, theta, resid, coefficient) = thresholdRepreProny(representation, fVectNew, Fs=Fs, percentLength=2,
+              percentOverlap=75, lowFreq=lowFreq, highFreq=highFreq, hold=1.4, dummyVal=np.nan)
+        # Get cumulative occurrence frequency of each value - number of values less each threshold.
+        cumF =  distributLaw(f, fVectNew)[0]
+        # Define interested pitch band as increasing occurrence rate distance.
+        idxMin = np.nonzero(cumF > np.max(cumF) * 0.1)[0][0]
+        idxMax = np.nonzero(cumF < np.max(cumF) * 0.98)[0][-1]
+        if fVectNew[idxMin] < 75:
+            return
+        kwargs.update({'roughFreqs': (fVectNew[idxMin], fVectNew[idxMax]), 'formFactor': formFactor[1:]})
+        kwargs.update({'iterations': iterations-1})  # Subtract recursive iterations counter.
+        (alpha, f, A, theta, res, coefficient, representation, fVectNew) = pronyParamsEst(signal, **kwargs)
+        if kwargs.get('plotGraphs', 0) == 2:
+            SM.plotUnder(fVectNew, ((cumF, cumF[idxMin], cumF[idxMax]),))
+        return alpha, f, A, theta, res, coefficient, representation, fVectNew
+    else:
+        # ///Pitch estimation///
+        (representation, t0, fVectNew) = DFTbank(signal, rect=2, level=0.2, Fs=Fs, mirrorLen=0.15, df=1,
+                                                 freqLims=(50, 200), formFactor=formFactorCurr)
+        (alpha, f, A, theta, resid, coefficient) = thresholdRepreProny(representation, fVectNew, Fs=Fs, percentLength=2,
+               percentOverlap=75, lowFreq=lowFreq, highFreq=highFreq, hold=1.4, dummyVal=np.nan)
+    if kwargs.get('t') and kwargs.get('plotGraphs', 0) == 2:
+        t = SM.makeNP(kwargs.get('t', 1))
+        t = SM.genTime(maxTime=t, Fs=Fs) if t.size == 1 else t
+        fInd = int(SM.closeInVect(fVectNew, np.nanmedian(f))[1])
+        SM.plotUnder(t, (signal, alpha,  (f, kwargs.get('freq'))), secondParam=resid,
+                  labels=('Signal', 'Estimated decay', ('Estimated frequency', 'Real frequency')), secondLabel='Error',
+                  secondLim=(0, np.nanmedian(resid)*1.1), xlabel='Time, sec', ylabel=('Modeled signal', 'Exponential decay', 'Frequency'), secLabel='Approximation error',
+                  yLims=(None, (np.nanmedian(alpha)-np.nanstd(alpha)*3, np.nanmedian(alpha)+np.nanstd(alpha)*3), None))
+    return alpha, f, A, theta, resid, coefficient, representation, fVectNew
+
+
+def trackEstimation(representation, fRough, fVect=(-np.inf, np.inf), **kwargs):
+    # Limit frequencies for analysing.
+    lims = kwargs.get('roughFreqs', fVect)
+    fRough[fRough<lims[0]] = lims[0]
+    if len(lims) > 1:
+        fRough[fRough > lims[0]] = lims[-1]
+    # Check track frequencies are in the representation frequency vector.
+    if not any(np.isinf(fVect)):
+        fRough = SM.closeInVect(fVect, fRough)
+
+
+def distributLaw(values, scale=None, dummyVal=None):
+    f = np.hstack(values) if type(values) in [tuple, list] else np.zeros_like(values) + values  # Copy and delete NaNs
+    f = f[np.isnan(f) == False]
+    if scale is None:
+        step = np.mean(np.diff(np.sort(f)))
+        scale = np.arange(np.min(f), np.max(f), step)
+    cumF = np.zeros_like(scale)
+    for ci in range(scale.size):
+        cumF[ci] = np.count_nonzero(f < scale[ci])
+    if not dummyVal is None:
+        return cumF, scale, np.diff(np.hstack((dummyVal, cumF)))  # Compute probability density.
+    return cumF, scale
+
+
+def scalogramFinding(representation=None, fVect=None, **kwargs):
+    if representation is None:
+        #signal = kwargs.get('signal')
+        (representation, t, fVect) = DFTbank(**kwargs)
+    repFreq = representationTrack(representation, fVect)
+    sc = scalogramFromRepresentation(representation)
+    sc = (sc/np.max(sc)).squeeze()
+    peaks = scipy.signal.find_peaks(sc)
+    if kwargs.get('plotGraphs', 0) == 2:
+        fig=plt.figure()
+        plt.plot(fVect, sc)
+        plt.plot(fVect[peaks[0]], sc[peaks[0]], "x")
+        plt.xlabel('Frequency, Hz')
+        plt.ylabel('Normalized scalogram')
+    return repFreq, sc, peaks
+
+
+
+def diffThreshold(signal, hold, dummyValue=None):
+    if dummyValue is not None:
+        dff = np.diff(np.hstack((dummyValue, signal)))
+    else:
+        dff = np.diff(signal)
+    indexes = np.abs(dff) < hold
+    return indexes, signal[indexes]
 
 
 def representationTrack(representation, fVect):
@@ -445,3 +594,39 @@ def representationTrack(representation, fVect):
         instFreq[ai] = fVect[freqInd]
     return instFreq
 
+
+def hilbertTrack(representation, fVect, Fs, f0):
+    index = SM.closeInVect(fVect, f0)[1]
+    signal = hilbert(representation[index, :])
+    phase = np.unwrap(np.angle(signal))
+    frequency = np.hstack((np.nan, (np.diff(phase) / (2.0 * np.pi) * Fs).squeeze()))
+    frequency[frequency.size-50:] = np.nan
+    frequency[0:50] = np.nan
+    return frequency
+
+
+def validateTrack(**kwargs):
+    # Get sequences with frequency diffs less assigned hold and having enough width.
+    f = kwargs.get('track')
+    f[np.isnan(f)] = np.nanmax(f)
+    dff = np.abs(np.diff(np.hstack((f[0], f))))  # Frequency jumps.
+    # Indexes of significant frequency jumps.
+    dff[dff < kwargs.get('hold', 0)] = 0  # Nullify low difference hops.
+    if np.nonzero(dff)[0].size == 0:
+        return (np.arange(f.size),)
+    # Check length and number of continuous parts of track
+    contLen = np.round(SM.makeNP(kwargs.get('contLen', 40))*f.size/100)
+    maxPlateau = None  # Assign the greater plateau limits as a previous one.
+    validatedRanges = []
+    for ai in range(contLen.size):
+        peaks = scipy.signal.find_peaks(-np.hstack((np.max(dff), dff, np.max(dff))), plateau_size=(contLen[ai], maxPlateau))
+        lb = peaks[1].get('left_edges')-1
+        rb = peaks[1].get('right_edges')-1
+        if lb.size > ai:  # Required number of pieces of assigned length.
+            for bi in range(lb.size):
+                indexes = np.arange(lb[bi], rb[bi])
+                truth = kwargs.get('truthVals')
+                if truth is None or np.mean(truth[indexes]-f[indexes]) < kwargs.get('hold', 0):
+                    validatedRanges.append(indexes)
+        maxPlateau = contLen[ai]
+    return validatedRanges

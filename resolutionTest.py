@@ -4,6 +4,8 @@ from matplotlib import pyplot as plt
 from scipy.signal import hilbert, chirp
 import scipy
 import pronyAnalysis as pa
+import dill
+import os
 
 plotGraphs=True
 Fs = 9600
@@ -44,7 +46,7 @@ fig.show()
 percentLength = 5
 percentOverlap = 50
 coefficients = np.array([0, 0.1, 0.2, 0.3])
-SNRs = np.arange(start=10, stop=-31, step=-1, dtype='float64')  # np.array([3., 0., -3., -6, -10., -12])
+SNRs = np.arange(start=20, stop=-31, step=-0.5, dtype='float64')  # np.array([3., 0., -3., -6, -10., -12])
 distances = np.arange(start=10, stop=3, step=-1)
 experiences=100
 totHarmResid = []
@@ -55,15 +57,32 @@ totDF2 = []
 fig = plt.figure(figsize=(8, 6))  # fig = []  # v0.1
 grid1 = matplotlib.gridspec.GridSpec(1, 1)
 ax_Resid = fig.add_subplot(grid1[0])
+ax_Resid.grid()
+ax_Resid.ticklabel_format(axis='y', style='sci', scilimits=(0, 0))
 fig2 = plt.figure(figsize=(8, 6))  # fig2 = []
 grid2 = matplotlib.gridspec.GridSpec(1, 1)
 ax_FreqDev = fig2.add_subplot(grid2[0])
+ax_FreqDev.grid()
+figPow = plt.figure(figsize=(8, 6))
+gridP = matplotlib.gridspec.GridSpec(2, 1)
+ax_harmPow = figPow.add_subplot(gridP[0])
+ax_harmPow.grid()
+ax_harmPow.set_xlabel('Мощность смеси сигнала и шума')
+ax_harmPow.set_ylabel('Ошибка аппроксимации')
+ax_harmPow.ticklabel_format(axis='y', style='sci', scilimits=(0, 0))
+ax_noisPow = figPow.add_subplot(gridP[1])
+ax_noisPow.set_xlabel('Мощность шума')
+ax_noisPow.set_ylabel('Ошибка аппроксимации')
+ax_noisPow.ticklabel_format(axis='y', style='sci', scilimits=(0, 0))
+ax_noisPow.grid()
 linestyles = ('-', '--', ':', '-.')
 matplotlib.rc('font', family='Times New Roman')
 
 for ai in range(coefficients.size):
     harmResid = np.zeros_like(SNRs)
     noisResid = np.zeros_like(SNRs)
+    harmPower = np.zeros_like(SNRs)
+    noisPower = np.zeros_like(SNRs)
     harmDisp = np.zeros_like(SNRs)
     noisDisp = np.zeros_like(SNRs)
     dF = np.zeros_like(SNRs)
@@ -92,6 +111,8 @@ for ai in range(coefficients.size):
             (alpha1, f1, A1, theta1, resid1, coefficient1) = pa.timeSegmentedProny(cmp2, Fs=Fs, percentLength=percentLength, percentOverlap=percentOverlap, order=2)
             harmResid[bi] += np.mean(resid)
             noisResid[bi] += np.mean(resid1)
+            harmPower[bi] += np.sum(cmp**2)/cmp.size
+            noisPower[bi] += np.sum(cmp2**2)/cmp2.size
             fTemp = np.array(f1)[:, 1]
             noisDisp += np.std(fTemp)
             '''''
@@ -145,6 +166,8 @@ for ai in range(coefficients.size):
             pass
         harmResid[bi] /= experiences
         noisResid[bi] /= experiences
+        harmPower[bi] /= experiences
+        noisPower[bi] /= experiences
         dF[bi] /= experiences
         dF2[bi] /= experiences
         pass
@@ -154,6 +177,7 @@ for ai in range(coefficients.size):
     totDF2.append(dF2)
 
     ax_Resid.plot(SNRs, harmResid, linestyle=linestyles[ai], color='k', label=r'$k_i = {}$'.format(coefficients[ai]))
+    ax_Resid.plot(SNRs, noisResid, linestyle=linestyles[ai], color='r', label=r'$k_i = {}$'.format(coefficients[ai]))
     ax_Resid.set_xlabel('ОСШ, дБ')
     ax_Resid.set_ylabel('Ошибки аппроксимации')
     ax_Resid.legend()
@@ -163,6 +187,11 @@ for ai in range(coefficients.size):
     ax_FreqDev.legend()
     fig.show()
     fig2.show()
+    ax_harmPow.plot(harmPower, harmResid, linestyle=linestyles[ai], color='k', label=r'$k_i = {}$'.format(coefficients[ai]))
+    ax_noisPow.plot(noisPower, noisResid, linestyle=linestyles[ai], color='k', label=r'$k_i = {}$'.format(coefficients[ai]))
+    ax_harmPow.legend()
+    ax_noisPow.legend()
+    figPow.show()
     pass
     '''''
     # v0.1
@@ -190,5 +219,70 @@ for ai in range(coefficients.size):
     '''''
 
 noiseResids = np.mean(np.hstack(totNoisResid))
-print('Noise residues: {}'.format(totNoisResid))
+print('Noise residues: {}'.format(noiseResids))
+
+figDff = plt.figure()
+gridDff = matplotlib.gridspec.GridSpec(1, 1)
+ax_Dff = figDff.add_subplot(gridDff[0])
+ax_Dff.grid()
+ax_Dff.ticklabel_format(axis='y', style='sci', scilimits=(0, 0))
+ax_Dff.plot(harmPower, noisResid-harmResid, linestyle='-', color='k')
+ax_Dff.set_xlabel('Мощность')
+ax_Dff.set_ylabel('Разность ошибкок аппроксимации смеси сигнал+шум и шума')
+figDff2 = plt.figure()
+gridDff2 = matplotlib.gridspec.GridSpec(1, 1)
+ax_Dff2 = figDff2.add_subplot(gridDff2[0])
+ax_Dff2.grid()
+ax_Dff2.ticklabel_format(axis='y', style='sci', scilimits=(0, 0))
+ax_Dff2.plot(SNRs, noisResid-harmResid, linestyle='-', color='k')
+ax_Dff2.set_xlabel('ОСШ, дБ')
+ax_Dff2.set_ylabel('Разность ошибкок аппроксимации смеси сигнал+шум и шума')
+figDff3 = plt.figure()
+gridDff3 = matplotlib.gridspec.GridSpec(1, 1)
+ax_Dff3 = figDff3.add_subplot(gridDff3[0])
+ax_Dff3.grid()
+ax_Dff3.ticklabel_format(axis='y', style='sci', scilimits=(0, 0))
+ax_Dff3.plot(SNRs, (noisResid-harmResid)/harmResid, linestyle='-', color='k')
+ax_Dff3.set_xlabel('ОСШ, дБ')
+ax_Dff3.set_ylabel('Относительная разность ошибкок аппроксимации смеси сигнал+шум и шума')
+
+figFinal = plt.figure()
+gridFn = matplotlib.gridspec.GridSpec(1, 1)
+ax_Fin = figFinal.add_subplot(gridFn[0])
+ax_Fin.grid()
+ax_Fin.ticklabel_format(axis='y', style='sci', scilimits=(0, 0))
+experiences=1
+SNRs = np.hstack((np.inf, SNRs, -np.inf))
+cmap1 = plt.cm.get_cmap('hsv', SNRs.size+1)
+for di in range(SNRs.size):
+    cleanPower = np.zeros_like(harmPower)
+    cleanResid = np.zeros_like(harmPower)
+    for ci in range(experiences):
+        signalClean = chirp(t, freq[0, 0], t[-1], freq[0, -1])
+        if SNRs[di] == np.inf:
+            signal = signalClean
+        elif SNRs[di] == -np.inf:
+            signal = noise
+        else:
+            (signal, noise) = pa.awgn(signalClean, SNRdB=SNRs[di])[0:2]
+        for bi in range(harmPower.size):
+            mult = harmPower[bi]/(np.sum(signal**2)/signal.size)
+            signal = signal*np.sqrt(mult)
+            cleanPower[bi] = np.sum(signal**2)/signal.size
+            (alpha1, f1, A1, theta1, resid1, coefficient1) = pa.timeSegmentedProny(signal, Fs=Fs, percentLength=percentLength,
+                                                                                   percentOverlap=percentOverlap, order=2)
+            cleanResid[bi] += np.mean(resid1)
+    cleanResid /= experiences
+    if np.round(SNRs[di]/5) == SNRs[di]/5:
+        ax_Fin.plot(cleanPower, cleanResid, linestyle='-', color=cmap1(di), label='SNR {}'.format(SNRs[di]))
+#ax_Fin.plot(cleanPower, cleanResid, linestyle='--', color='k', label='Чистый сигнал')
+#ax_Fin.plot(harmPower, harmResid, linestyle='-', color='k', label='Сигнал+шум')
+#ax_Fin.plot(noisPower, noisResid, linestyle=':', color='r', label="Шум")
+ax_Fin.legend()
+ax_Fin.set_xlabel('Мощность')
+ax_Fin.set_ylabel('Ошибка аппроксимации')
+
+file_name = 'Out\\resolutionTest.pkl'
+os.mkdir('Out')
+dill.dump_session(file_name)
 pass

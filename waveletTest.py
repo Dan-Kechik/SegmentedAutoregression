@@ -27,7 +27,8 @@ gridDFR = matplotlib.gridspec.GridSpec(1, 1)
 ax_dFrepr = figDFrep.add_subplot(gridDFR[0])
 linestyles = ('-', '--', ':', '-.')
 matplotlib.rc('font', family='Times New Roman')
-SNRs = np.arange(start=-2, stop=-32, step=-1, dtype='float64')
+SNRs = np.arange(start=-6, stop=-16, step=-0.5, dtype='float64')
+cmap1 = plt.cm.get_cmap('magma', experiencies)
 
 for ai in range(dFmax.size):
     errAver = []  # Array by SNR for the current frequency increasing coefficient.
@@ -36,15 +37,18 @@ for ai in range(dFmax.size):
         errTot = []  # Array by experiences.
         errTotRep = []  # Array by experiences.
         validLen = []  # Length of valid track related to the common signal length.
+        validLenRepr = []
         if plotGraphs:
             fig.append(plt.figure(figsize=(8, 6)))
             grid = matplotlib.gridspec.GridSpec(1, 1)
             ax_FreqDev = fig[-1].add_subplot(grid[0])
             ax_FreqDev.title.set_text('Coefficient = {}, SNR = {}'.format(dFmax[ai], SNRs[ci]))
+            ax_FreqDev.grid()
             figRepr.append(plt.figure(figsize=(8, 6)))
             gridR = matplotlib.gridspec.GridSpec(1, 1)
             ax_FreqR = figRepr[-1].add_subplot(gridR[0])
             ax_FreqR.title.set_text('Time-frequency track. Coefficient = {}, SNR = {}'.format(dFmax[ai], SNRs[ci]))
+            ax_FreqR.grid()
         for bi in range(experiencies):
             coeff = dFmax[ai]/t.size/dt
             freq = np.ones((1, t.size))
@@ -68,56 +72,50 @@ for ai in range(dFmax.size):
 
             repFreq = pa.representationTrack(representation, fVectNew)
 
-            (alpha, f, A, theta, resid, coefficient) = pa.thresholdRepreProny(representation, fVectNew, Fs=Fs, lowFreq=95, highFreq=130, hold=1.4)
+            (representation, t0, fVectNew) = pa.DFTbank(signal, rect=2, mirrorLen=0.15, level=0.2, freqLims=(50, 200), Fs=Fs, df=1, formFactor=128)
+            (alpha, f, A, theta, resid, coefficient) = pa.thresholdRepreProny(representation, fVectNew, Fs=Fs, centralFreq=0, lowFreq=95, highFreq=130, hold=1.4)
             if plotGraphs:
                 ax_FreqDev.plot(t, freq[0, :], linestyle='-', color='k', label='Мгновенная частота')
                 ax_FreqR.plot(t, freq[0, :], linestyle='-', color='k', label='Мгновенная частота')
             indexes = np.hstack(np.nonzero(f))
             # Select long stable windows.
             if selectWinds:
-                # f0 = f[np.nonzero(f)[0]]
-                dff = np.abs(np.diff(f))  # Frequency jumps.
-                # Indexes of significant frequency jumps.
-                nz = np.nonzero(dff > 7)
-                nz = np.hstack((0, nz[0], f.size))
-                # Windows lengths.
-                dnz = np.diff(nz)
-                validWinds = np.hstack(np.nonzero(dnz > 0.3 * f.size))
-                fNew = np.zeros_like(f)
-                for di in range(validWinds.size):
-                    currIdxs = nz[validWinds[di]:validWinds[di] + 2]
-                    fNew[np.arange(start=currIdxs[0] + 1, stop=currIdxs[1], step=1, dtype='int')] = f[
-                        np.arange(start=currIdxs[0] + 1, stop=currIdxs[1], step=1, dtype='int')]
-                errIdxs = np.hstack(np.nonzero(fNew))
+                errIdxs = pa.SM.validateTrack(f)
+                errIdxsRepr = pa.SM.validateTrack(repFreq)
             else:
                 errIdxs = np.hstack(np.nonzero(f))
+                errIdxsRepr = np.hstack(np.nonzero(repFreq))
             validLen.append(errIdxs.size/f.size)
             if validLen[-1]<0.85:
                 errIdxs = indexes
+            validLenRepr.append(errIdxsRepr.size/f.size)
+            if validLenRepr[-1]<0.85:
+                errIdxsRepr = indexes
 
             if plotGraphs:
-                ax_FreqDev.plot(t[indexes], f[indexes], linestyle=':', color='k', label='Оценка частоты')
+                ax_FreqDev.plot(t[indexes], f[indexes], linestyle=':', color=cmap1(bi), label='Оценка частоты')
                 #ax_FreqDev.plot(t[errIdxs], f[errIdxs], linestyle=':', color='r', label='Поправленная оценка')
                 ax_FreqDev.set_xlabel('Время, сек')
                 ax_FreqDev.set_ylabel('Частота, Гц')
-                ax_FreqR.plot(t, repFreq, linestyle=':', color='k', label='Оценка частоты')
+                ax_FreqR.plot(t, repFreq, linestyle=':', color=cmap1(bi), label='Оценка частоты')
                 ax_FreqR.set_xlabel('Время, сек')
                 ax_FreqR.set_ylabel('Частота, Гц')
             diff = freq[0, errIdxs]-f[errIdxs]
             err = pa.rms(diff)
             errTot.append(err)
-            errRep = pa.rms(freq[0, :]-repFreq)
+            errRep = pa.rms(freq[0, errIdxsRepr]-repFreq[errIdxsRepr])
             errTotRep.append(errRep)
-            print('Coefficient {}, error {}, valid track length {} percents, representation error {}'.format(dFmax[ai], err, validLen[-1]*100, errRep))
+            print('Coefficient {}, error {}, valid track length {} percents, representation error {}, repres. valid track len = {}'.format(dFmax[ai], err, validLen[-1]*100, errRep, validLenRepr[-1]*100))
             if ai<1 and bi<1 and plotGraphs:
                 ax_FreqDev.legend()
                 ax_FreqR.legend()
         errAver.append(np.mean(np.array(errTot)))
         errAverRep.append(np.mean(np.array(errTotRep)))
-        print('Coefficient = {}, SNR = {}, AVERAGE error = {}, AVERAGE valid track len = {}, AVG representation {}'.format(dFmax[ai], SNRs[ci], errAver[-1], np.mean(np.array(validLen))*100, errAverRep))
+        print('Coefficient = {}, SNR = {}, AVERAGE error = {}, AVERAGE valid track len = {}, AVG representation {}, REPR valid track len = {}'.format(dFmax[ai], SNRs[ci], errAver[-1], np.mean(np.array(validLen))*100, errAverRep[-1], np.mean(np.array(validLenRepr))*100))
         if plotGraphs:
             fig[-1].show()
             figRepr[-1].show()
+        pass
     errAverArr = np.array(errAver)
     ax_dF.plot(SNRs, errAverArr, linestyle=linestyles[ai], color='k', label=r'$k_i = {}$'.format(dFmax[ai]))
     ax_dF.set_xlabel('ОСШ, дБ')
@@ -132,7 +130,7 @@ for ai in range(dFmax.size):
 
 figDF.show()
 figDFrep.show()
-file_name = 'Out\\wavelet.pkl'
-os.mkdir('Out')
+file_name = 'Out\\wavelet128.pkl'
+#os.mkdir('Out')
 dill.dump_session(file_name)
 pass
