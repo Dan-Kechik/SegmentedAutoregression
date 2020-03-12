@@ -507,7 +507,7 @@ def pronyParamsEst(signal, **kwargs):
         idxMin = np.nonzero(cumF > np.max(cumF) * 0.1)[0][0]
         idxMax = np.nonzero(cumF < np.max(cumF) * 0.98)[0][-1]
         if fVectNew[idxMin] < 75:
-            return
+            return alpha, f, A, theta, resid, coefficient, representation, fVectNew
         kwargs.update({'roughFreqs': (fVectNew[idxMin], fVectNew[idxMax]), 'formFactor': formFactor[1:]})
         kwargs.update({'iterations': iterations-1})  # Subtract recursive iterations counter.
         (alpha, f, A, theta, res, coefficient, representation, fVectNew) = pronyParamsEst(signal, **kwargs)
