@@ -14,7 +14,7 @@ def awgn(signal, SNRdB=None, SNRlin=None, sigPower=None):
     if not SNRdB is None:
         SNRlin = SNRlin + 10 ** (SNRdB / 10)
     if not sigPower:
-        sigPower = np.sum(signal**2)/signal.size
+        sigPower = np.sqrt(np.sum(signal**2)/signal.size)
     noisePower = sigPower/SNRlin
     noise = np.random.normal(loc=0.0, scale=noisePower, size=signal.shape)
     return signal+noise, noise, sigPower, noisePower, SNRlin, SNRdB

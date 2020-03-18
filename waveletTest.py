@@ -27,7 +27,7 @@ gridDFR = matplotlib.gridspec.GridSpec(1, 1)
 ax_dFrepr = figDFrep.add_subplot(gridDFR[0])
 linestyles = ('-', '--', ':', '-.')
 matplotlib.rc('font', family='Times New Roman')
-SNRs = np.arange(start=-6, stop=-16, step=-0.5, dtype='float64')
+SNRs = np.arange(start=10, stop=-16.5, step=-0.5, dtype='float64')
 cmap1 = plt.cm.get_cmap('magma', experiencies)
 
 for ai in range(dFmax.size):
@@ -130,7 +130,7 @@ for ai in range(dFmax.size):
 
 figDF.show()
 figDFrep.show()
-file_name = 'Out\\wavelet128.pkl'
+file_name = 'Out\\wavelet128Fine1016.pkl'
 #os.mkdir('Out')
 dill.dump_session(file_name)
 pass

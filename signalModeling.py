@@ -230,23 +230,55 @@ def pulsesTest(**kwargs):
     errAlph = np.zeros_like(SNRs, dtype='float64')
     errF = np.zeros_like(SNRs, dtype='float64')
     errT = np.zeros_like(SNRs, dtype='float64')
+    errPer = np.zeros_like(SNRs, dtype='float64')
     resids = np.zeros_like(SNRs, dtype='float64')
     for ai, SNR in enumerate(kwargs.get('SNRvals', [np.inf])):
+        kwargs.update({'SNR':SNR})
+        (signal, timeSamples, t) = modelPulses(**kwargs)  # Get model parameters for comparison.
+        if not kwargs.get('processes') is None:
+            kwCopy = [copy.deepcopy(kwargs) for i in range(kwargs.get('experiences', 1))]
+            with Pool(processes=kwargs.get('processes')) as pool:
+                if kwargs.get('async', False):
+                    result = []
+                    for r in pool.imap_unordered(pulseExperience, kwCopy):
+                        result.append(r)
+                else:
+                    result = pool.map(pulseExperience, kwCopy)
+                pool.close()
+                pool.join()
         for bi in range(kwargs.get('experiences', 1)):
-            kwargs.update({'SNR':SNR})
-            (signal, timeSamples, t) = modelPulses(**kwargs)
-            (alpha, f, A, theta, res, timeSamplesIdsEst) = pulsesParamsEst(signal, **kwargs)[0:6]
+            (alpha, f, A, theta, res, timeSamplesIdsEst) = result[bi]
             errAlph[ai] += pa.rms(alpha-makeNP(kwargs.get('decay', 0)))
             errF[ai] += pa.rms(f - makeNP(kwargs.get('carrier', 0)))
             resids[ai] += np.nanmean(res[res<np.inf])
             timeSamplesTemp = closeInVect(timeSamples, t[timeSamplesIdsEst])[0]  # Consider missed pulses.
             errT += pa.rms(t[timeSamplesIdsEst] - timeSamplesTemp)
+            errPer += pa.rms(np.mean(np.diff(timeSamples)) - np.mean(np.diff(t[timeSamplesIdsEst])))
         errAlph /= kwargs.get('experiences', 1)
         errF /= kwargs.get('experiences', 1)
         errT /= kwargs.get('experiences', 1)
+        errPer /= kwargs.get('experiences', 1)
         resids /= kwargs.get('experiences', 1)
-    plotUnder(SNRs, (errAlph, errF, errT), secondParam=resids, ylabel=('Decay RMSE', 'Frequency RMSE', 'Time RMSE'),
-              secLabel='Approximation error', xlabel='SNR, dB', labels='Estimation error', secondLabel='Approximation error')
+    plotUnder(SNRs, (errAlph, errF, errT), ylabel=('Decay RMSE', 'Frequency RMSE', 'Time RMSE'),  # , secondParam=resids
+              xlabel='SNR, dB', labels='Estimation error')  # secLabel='Approximation error', , secondLabel='Approximation error'
+    import os
+    if not (os.path.exists('Out') and os.path.isdir('Out')):
+        os.mkdir('Out')
+    fName = kwargs.get('fileName')
+    if not fName is None:
+        if fName == '':
+            fName = 'pulsesEstimation.pkl'
+        with open(os.path.join('Out', fName), "wb") as f:
+            pool=None
+            kwCopy=None
+            dill.dump(locals(), f)
+            f.close()
+
+
+def pulseExperience(kwargs):
+    (signal, timeSamples, t) = modelPulses(**kwargs)
+    (alpha, f, A, theta, res, timeSamplesIdsEst) = pulsesParamsEst(signal, **kwargs)[0:6]
+    return alpha, f, A, theta, res, timeSamplesIdsEst
 
 
 def modelModulated(**kwargs):
@@ -359,17 +391,18 @@ def modTest(**kwargs):
     detectLenRepr /= kwargs.get('experiences', 1)
     detectRateRepr /= kwargs.get('experiences', 1)
     # //Evaluate thresholding statistics//
-    TP = [holdMeans[i].get('trueH0') for i in range(len(holdMeans))]
-    TN = [holdMeans[i].get('trueH1') for i in range(len(holdMeans))]
-    FP = [holdMeans[i].get('falseH0') for i in range(len(holdMeans))]
-    FN = [holdMeans[i].get('falseH1') for i in range(len(holdMeans))]
-    figMean = plotUnder(SNRs, ((TP, TN, FP, FN),), labels=(('TP', 'TN', 'FP', 'FN'),), xlabel='SNR, dB', ylabel=('Probability',))
+    TP = makeNP([holdMeans[i].get('trueH0') for i in range(len(holdMeans))])
+    TN = makeNP([holdMeans[i].get('trueH1') for i in range(len(holdMeans))])
+    FP = makeNP([holdMeans[i].get('falseH0') for i in range(len(holdMeans))])
+    FN = makeNP([holdMeans[i].get('falseH1') for i in range(len(holdMeans))])
+    figMed = plotUnder(SNRs, ((TP, TN, FP + FN),), labels=(('True positive', 'True negative', 'Common risk'),),
+                       xlabel='SNR, dB', ylabel=('Probability',))
     plt.title('Errors means')
-    TP = [holdMeans[i].get('trueH0') for i in range(len(holdMeds))]
-    TN = [holdMeans[i].get('trueH1') for i in range(len(holdMeds))]
-    FP = [holdMeans[i].get('falseH0') for i in range(len(holdMeds))]
-    FN = [holdMeans[i].get('falseH1') for i in range(len(holdMeds))]
-    figMed = plotUnder(SNRs, ((TP, TN, FP, FN),), labels=(('TP', 'TN', 'FP', 'FN'),), xlabel='SNR, dB', ylabel=('Probability',))
+    TP = makeNP([holdMeds[i].get('trueH0') for i in range(len(holdMeds))])
+    TN = makeNP([holdMeds[i].get('trueH1') for i in range(len(holdMeds))])
+    FP = makeNP([holdMeds[i].get('falseH0') for i in range(len(holdMeds))])
+    FN = makeNP([holdMeds[i].get('falseH1') for i in range(len(holdMeds))])
+    figMed = plotUnder(SNRs, ((TP, TN, FP+FN),), labels=(('True positive', 'True negative', 'Common risk'),), xlabel='SNR, dB', ylabel=('Probability',))
     plt.title('Errors meds')
     figFinal = plotUnder(SNRs, (errF, errR), secondParam=resids, ylabel=('Prony frequency RMSE', 'Spectrogram frequency RMSE'),
               secLabel='Approximation error', xlabel='SNR, dB', labels='Estimation error', secondLabel='Approximation error')
@@ -381,7 +414,10 @@ def modTest(**kwargs):
         if fName == '':
             fName = 'probEstimation.pkl'
         with open(os.path.join('Out', fName), "wb") as f:
-            dill.dump(globals(), f)
+            pool=None
+            kwCopy=None
+            dill.dump(locals(), f)
+            f.close()
 
 
 def autoThresholding(H1samples, H0samples, **kwargs):
@@ -398,6 +434,7 @@ def autoThresholding(H1samples, H0samples, **kwargs):
         falseH1 = np.array((0,))
         idx = 0
     else:
+        lim = np.array((np.max(scaleH1), np.min(scaleH0)))
         dH = np.min((scaleH0[1]-scaleH0[0], scaleH1[1]-scaleH1[0]))
         limVect = np.arange(lim[1], lim[0], dH)
         trueH0 = np.zeros_like(limVect, dtype='float64')
@@ -490,7 +527,7 @@ def modelExperience(kwdict, **kwargs):
     residMeds = np.nanmedian(res)
     residSums = np.nansum(res)
     kwargs.update({'freq': freq, 'roughFreqs': (70, 150), 'iterations': 1, 'formFactor': (64, 128)})
-    noise = np.random.normal(loc=0.0, scale=np.sum(signal ** 2) / signal.size, size=signal.shape)
+    noise = np.random.normal(loc=0.0, scale=np.sqrt(np.sum(signal ** 2) / signal.size), size=signal.shape)
     (alphaN, fN, AN, thetaN, resN, coefficientN, representationN, fVectNewN) = pa.pronyParamsEst(noise, **kwargs)
     residNoiseMeans = np.nanmean(resN)
     residNoiseMeds = np.nanmedian(resN)
@@ -516,13 +553,13 @@ def main():
     plotGraphs=0
 
 
-    modTest(Fs=Fs, t=1, SNRvals=np.hstack((np.arange(4, -5, -1), np.arange(-5, -7.5, -0.5), np.arange(-8, -22, -2))), fileName='AMf0d0.pkl',
-            carrier=100, FMfreq=5, FMdepth=0.1, AMfreq=5, AMdepth=0, plotGraphs=plotGraphs, experiences=16*7, processes=16, async=True)  # 6, -12
+    modTest(Fs=Fs, t=1, SNRvals=np.arange(4, -12, -2), fileName='AMf5d025.pkl',
+            carrier=100, FMfreq=5, FMdepth=0.1, AMfreq=5, AMdepth=0.25, plotGraphs=plotGraphs, experiences=100, processes=5, async=True)  # 6, -12
     modTest(Fs=Fs, t=1, SNRvals=np.hstack((np.arange(4, -5, -1), np.arange(-5, -7.5, -0.5), np.arange(-8, -22, -2))), fileName='AMf5d02.pkl',
-            carrier=100, FMfreq=5, FMdepth=0.1, AMfreq=5, AMdepth=0.2, plotGraphs=plotGraphs, experiences=16*7, processes=16, async=True)  # 6, -12
+            carrier=100, FMfreq=5, FMdepth=0.1, AMfreq=5, AMdepth=0.2, plotGraphs=plotGraphs, experiences=100, processes=4, async=True)  # 6, -12
     modTest(Fs=Fs, t=1, SNRvals=np.hstack((np.arange(4, -5, -1), np.arange(-5, -7.5, -0.5), np.arange(-8, -22, -2))), fileName='AMf3d02.pkl',
-            carrier=100, FMfreq=5, FMdepth=0.1, AMfreq=3, AMdepth=0.2, plotGraphs=plotGraphs, experiences=16*7, processes=16, async=True)  # 6, -12
-    return 
+            carrier=100, FMfreq=5, FMdepth=0.1, AMfreq=3, AMdepth=0.2, plotGraphs=plotGraphs, experiences=100, processes=4, async=True)  # 6, -12
+    return
 
     h0Sam = np.random.normal(loc=0.0, scale=1/3, size=(1, 100))  # np.arange(0.1, 1.1, 0.05)
     h1Sam = np.random.normal(loc=1.0, scale=1/2.5, size=(1, 100))  # np.arange(0.9, 2, 0.1)

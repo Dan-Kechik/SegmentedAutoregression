@@ -46,7 +46,7 @@ fig.show()
 percentLength = 5
 percentOverlap = 50
 coefficients = np.array([0, 0.1, 0.2, 0.3])
-SNRs = np.arange(start=20, stop=-31, step=-0.5, dtype='float64')  # np.array([3., 0., -3., -6, -10., -12])
+SNRs = np.arange(start=10, stop=-16.5, step=-0.5, dtype='float64')  # np.array([3., 0., -3., -6, -10., -12])
 distances = np.arange(start=10, stop=3, step=-1)
 experiences=100
 totHarmResid = []
@@ -282,7 +282,8 @@ ax_Fin.legend()
 ax_Fin.set_xlabel('Мощность')
 ax_Fin.set_ylabel('Ошибка аппроксимации')
 
-file_name = 'Out\\resolutionTest.pkl'
-os.mkdir('Out')
+file_name = 'Out\\resolutionTestFine1016.pkl'
+if not (os.path.exists('Out') and os.path.isdir('Out')):
+    os.mkdir('Out')
 dill.dump_session(file_name)
 pass
