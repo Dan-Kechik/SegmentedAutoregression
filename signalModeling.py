@@ -553,12 +553,14 @@ def main():
     plotGraphs=0
 
 
+    pulsesTest(Fs=Fs, decay=decay, t=5, SNRvals=np.arange(4, -12, -0.5), carrier=100, plotGraphs=plotGraphs, experiences=100, processes=20)
+
     modTest(Fs=Fs, t=1, SNRvals=np.arange(4, -12, -2), fileName='AMf5d025.pkl',
-            carrier=100, FMfreq=5, FMdepth=0.1, AMfreq=5, AMdepth=0.25, plotGraphs=plotGraphs, experiences=100, processes=5, async=True)  # 6, -12
+            carrier=100, FMfreq=5, FMdepth=0.1, AMfreq=5, AMdepth=0.25, plotGraphs=plotGraphs, experiences=100, processes=20, async=True)  # 6, -12
     modTest(Fs=Fs, t=1, SNRvals=np.hstack((np.arange(4, -5, -1), np.arange(-5, -7.5, -0.5), np.arange(-8, -22, -2))), fileName='AMf5d02.pkl',
-            carrier=100, FMfreq=5, FMdepth=0.1, AMfreq=5, AMdepth=0.2, plotGraphs=plotGraphs, experiences=100, processes=4, async=True)  # 6, -12
+            carrier=100, FMfreq=5, FMdepth=0.1, AMfreq=5, AMdepth=0.2, plotGraphs=plotGraphs, experiences=100, processes=20, async=True)  # 6, -12
     modTest(Fs=Fs, t=1, SNRvals=np.hstack((np.arange(4, -5, -1), np.arange(-5, -7.5, -0.5), np.arange(-8, -22, -2))), fileName='AMf3d02.pkl',
-            carrier=100, FMfreq=5, FMdepth=0.1, AMfreq=3, AMdepth=0.2, plotGraphs=plotGraphs, experiences=100, processes=4, async=True)  # 6, -12
+            carrier=100, FMfreq=5, FMdepth=0.1, AMfreq=3, AMdepth=0.2, plotGraphs=plotGraphs, experiences=100, processes=20, async=True)  # 6, -12
     return
 
     h0Sam = np.random.normal(loc=0.0, scale=1/3, size=(1, 100))  # np.arange(0.1, 1.1, 0.05)
