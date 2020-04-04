@@ -238,7 +238,7 @@ def pulsesTest(**kwargs):
         if not kwargs.get('processes') is None:
             kwCopy = [copy.deepcopy(kwargs) for i in range(kwargs.get('experiences', 1))]
             with Pool(processes=kwargs.get('processes')) as pool:
-                if kwargs.get('async', False):
+                if kwargs.get('asyncLoop', False):
                     result = []
                     for r in pool.imap_unordered(pulseExperience, kwCopy):
                         result.append(r)
@@ -259,6 +259,7 @@ def pulsesTest(**kwargs):
         errT /= kwargs.get('experiences', 1)
         errPer /= kwargs.get('experiences', 1)
         resids /= kwargs.get('experiences', 1)
+        print(kwargs.get('fileName', 'pulseTest')+' {} SNR'.format(SNR))
     plotUnder(SNRs, (errAlph, errF, errT), ylabel=('Decay RMSE', 'Frequency RMSE', 'Time RMSE'),  # , secondParam=resids
               xlabel='SNR, dB', labels='Estimation error')  # secLabel='Approximation error', , secondLabel='Approximation error'
     import os
@@ -269,9 +270,8 @@ def pulsesTest(**kwargs):
         if fName == '':
             fName = 'pulsesEstimation.pkl'
         with open(os.path.join('Out', fName), "wb") as f:
-            pool=None
-            kwCopy=None
-            dill.dump(locals(), f)
+            kwSave = {'SNRs': SNRs, 'errAlph': errAlph, 'errF': errF, 'errT': errT, 'errPer': errPer, 'resids': resids}
+            dill.dump(kwSave, f)
             f.close()
 
 
@@ -347,7 +347,7 @@ def modTest(**kwargs):
         if not kwargs.get('processes') is None:
             kwCopy = [copy.deepcopy(kwargs) for i in range(exper)]
             with Pool(processes=kwargs.get('processes')) as pool:
-                if kwargs.get('async', False):
+                if kwargs.get('asyncLoop', False):
                     result = []
                     for r in pool.imap_unordered(modelExperience, kwCopy):
                         result.append(r)
@@ -377,6 +377,7 @@ def modTest(**kwargs):
             errRvect.append(errRvect1)
         holdMeans.append(autoThresholding(residNoiseMeans[ai], residMeans[ai]))
         holdMeds.append(autoThresholding(residNoiseMeds[ai], residMeds[ai]))
+        print(kwargs.get('fileName', 'modTest')+' {} SNR'.format(SNR))
     pass
     #errAlph /= kwargs.get('experiences', 1)
     errF /= kwargs.get('experiences', 1)
@@ -414,9 +415,11 @@ def modTest(**kwargs):
         if fName == '':
             fName = 'probEstimation.pkl'
         with open(os.path.join('Out', fName), "wb") as f:
-            pool=None
-            kwCopy=None
-            dill.dump(locals(), f)
+            kwSave = {'SNRs': SNRs, 'errF': errF, 'errH': errH, 'errR': errR, 'resids': resids, 'residMeans': residMeans,
+                      'residMeds': residMeds, 'residNoiseMeans': residNoiseMeans, 'residNoiseMeds': residNoiseMeds,
+                    'errFvect': errFvect, 'errHvect': errHvect, 'errRvect': errRvect, 'detectRate': detectRate, 'detectLen': detectLen,
+                      'detectHilRate': detectHilRate, 'detectHilLen': detectHilLen, 'detectHilLen': detectHilLen, 'detectLenRepr': detectLenRepr}
+            dill.dump(kwSave, f)
             f.close()
 
 
@@ -553,14 +556,14 @@ def main():
     plotGraphs=0
 
 
-    pulsesTest(Fs=Fs, decay=decay, t=5, SNRvals=np.arange(4, -12, -0.5), carrier=100, plotGraphs=plotGraphs, experiences=100, processes=20)
+    pulsesTest(Fs=Fs, decay=decay, t=5, SNRvals=np.arange(4, -16.5, -0.5), fileName='', carrier=100, plotGraphs=plotGraphs, experiences=102, processes=3, asyncLoop=True)
 
-    modTest(Fs=Fs, t=1, SNRvals=np.arange(4, -12, -2), fileName='AMf5d025.pkl',
-            carrier=100, FMfreq=5, FMdepth=0.1, AMfreq=5, AMdepth=0.25, plotGraphs=plotGraphs, experiences=100, processes=20, async=True)  # 6, -12
-    modTest(Fs=Fs, t=1, SNRvals=np.hstack((np.arange(4, -5, -1), np.arange(-5, -7.5, -0.5), np.arange(-8, -22, -2))), fileName='AMf5d02.pkl',
-            carrier=100, FMfreq=5, FMdepth=0.1, AMfreq=5, AMdepth=0.2, plotGraphs=plotGraphs, experiences=100, processes=20, async=True)  # 6, -12
-    modTest(Fs=Fs, t=1, SNRvals=np.hstack((np.arange(4, -5, -1), np.arange(-5, -7.5, -0.5), np.arange(-8, -22, -2))), fileName='AMf3d02.pkl',
-            carrier=100, FMfreq=5, FMdepth=0.1, AMfreq=3, AMdepth=0.2, plotGraphs=plotGraphs, experiences=100, processes=20, async=True)  # 6, -12
+    modTest(Fs=Fs, t=1, SNRvals=np.arange(4, -16.5, -0.5), fileName='AMf5d025.pkl',
+            carrier=100, FMfreq=5, FMdepth=0.1, AMfreq=5, AMdepth=0.25, plotGraphs=plotGraphs, experiences=102, processes=3, asyncLoop=True)  # 6, -12
+    modTest(Fs=Fs, t=1, SNRvals=np.arange(4, -16.5, -0.5), fileName='AMf5d02.pkl',  # np.hstack((np.arange(4, -5, -1), np.arange(-5, -7.5, -0.5), np.arange(-8, -22, -2)))
+            carrier=100, FMfreq=5, FMdepth=0.1, AMfreq=5, AMdepth=0.2, plotGraphs=plotGraphs, experiences=102, processes=3, asyncLoop=True)  # 6, -12
+    modTest(Fs=Fs, t=1, SNRvals=np.arange(4, -16.5, -0.5), fileName='AMf3d02.pkl',
+            carrier=100, FMfreq=5, FMdepth=0.1, AMfreq=3, AMdepth=0.2, plotGraphs=plotGraphs, experiences=102, processes=3, asyncLoop=True)  # 6, -12
     return
 
     h0Sam = np.random.normal(loc=0.0, scale=1/3, size=(1, 100))  # np.arange(0.1, 1.1, 0.05)
@@ -571,7 +574,7 @@ def main():
     #modTest(Fs=Fs, t=1, SNRvals=(0,), carrier=100, FMfreq=5, FMdepth=0.1, AMfreq=4, AMdepth=0.25, plotGraphs=plotGraphs, experiences=1)  # 6, -12
     tStart = timer()
     modTest(Fs=Fs, t=1, SNRvals=np.arange(4, 1, -1), fileName='',
-            carrier=100, FMfreq=5, FMdepth=0.1, AMfreq=5, AMdepth=0, plotGraphs=plotGraphs, experiences=16, processes=4, async=True)  # 6, -12
+            carrier=100, FMfreq=5, FMdepth=0.1, AMfreq=5, AMdepth=0, plotGraphs=plotGraphs, experiences=16, processes=4, asyncLoop=True)  # 6, -12
     elapsed2 = timer() - tStart
     print(('2 async', elapsed2))
 

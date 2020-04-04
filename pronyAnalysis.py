@@ -5,7 +5,7 @@ import matplotlib
 from matplotlib import pyplot as plt
 from scipy.signal import hilbert
 import signalModeling as SM
-from numba import jit
+#from numba import jit
 
 
 def awgn(signal, SNRdB=None, SNRlin=None, sigPower=None):
