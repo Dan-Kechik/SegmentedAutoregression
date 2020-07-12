@@ -174,7 +174,9 @@ def plotUnder(t, signal, yLims=None, xLims=None, secondParam=None, secondLim=Non
             if not secLabel is None:
                 ax_sec.set_ylabel(secLabel)
         labs = [l.get_label() for l in lines]
-        ax_curr.legend(lines, labs)
+        emptyLables = np.array([labs[i][:5] == '_line' for i in range(len(labs))])
+        if not np.all(emptyLables):
+            ax_curr.legend(lines, labs)
     return fig
 
 
@@ -196,10 +198,10 @@ def pulsesParamsEst(signal, **kwargs):
     (representation, t0, fVectNew) = pa.DFTbank(signal, rect=2, level=0.2, Fs=Fs, mirrorLen=0.15, df=1,
                                                 freqLims=(50, 200), formFactor=128)
     (alpha, f, A, theta, resid, coefficient) = pa.thresholdRepreProny(representation, fVectNew, Fs=Fs, periodsNum=10,
-        lowFreq=75, highFreq=145, hold=1.4, errorThresh=1, dummyVal=np.nan) #, diffHold=1
+        lowFreq=75, highFreq=145, hold=1.4, errorThresh=0.8, dummyVal=np.nan) #, diffHold=1
     tempDecay = np.zeros_like(alpha)+alpha
     tempDecay[np.isnan(alpha) == True] = -100
-    timeSamples = np.nonzero(np.diff(np.hstack((-100, tempDecay)))>100)[0]
+    timeSamples = np.nonzero(np.diff(np.hstack((-100, tempDecay)))>50)[0]
     if kwargs.get('t') and kwargs.get('plotGraphs', 0) == 2:
         t = makeNP(kwargs.get('t', 1))
         t = genTime(maxTime=t, Fs=Fs) if t.size == 1 else t
@@ -247,19 +249,22 @@ def pulsesTest(**kwargs):
                 pool.close()
                 pool.join()
         for bi in range(kwargs.get('experiences', 1)):
-            (alpha, f, A, theta, res, timeSamplesIdsEst) = result[bi]
+            if not kwargs.get('processes') is None:
+                (alpha, f, A, theta, res, timeSamplesIdsEst) = result[bi]
+            else:
+                (alpha, f, A, theta, res, timeSamplesIdsEst) = pulseExperience(kwargs)
             errAlph[ai] += pa.rms(alpha-makeNP(kwargs.get('decay', 0)))
             errF[ai] += pa.rms(f - makeNP(kwargs.get('carrier', 0)))
             resids[ai] += np.nanmean(res[res<np.inf])
             timeSamplesTemp = closeInVect(timeSamples, t[timeSamplesIdsEst])[0]  # Consider missed pulses.
-            errT += pa.rms(t[timeSamplesIdsEst] - timeSamplesTemp)
-            errPer += pa.rms(np.mean(np.diff(timeSamples)) - np.mean(np.diff(t[timeSamplesIdsEst])))
-        errAlph /= kwargs.get('experiences', 1)
-        errF /= kwargs.get('experiences', 1)
-        errT /= kwargs.get('experiences', 1)
-        errPer /= kwargs.get('experiences', 1)
-        resids /= kwargs.get('experiences', 1)
+            errT[ai] += pa.rms(t[timeSamplesIdsEst] - timeSamplesTemp)
+            errPer[ai] += pa.rms(np.mean(np.diff(timeSamples)) - np.mean(np.diff(t[timeSamplesIdsEst])))
         print(kwargs.get('fileName', 'pulseTest')+' {} SNR'.format(SNR))
+    errAlph /= kwargs.get('experiences', 1)
+    errF /= kwargs.get('experiences', 1)
+    errT /= kwargs.get('experiences', 1)
+    errPer /= kwargs.get('experiences', 1)
+    resids /= kwargs.get('experiences', 1)
     plotUnder(SNRs, (errAlph, errF, errT), ylabel=('Decay RMSE', 'Frequency RMSE', 'Time RMSE'),  # , secondParam=resids
               xlabel='SNR, dB', labels='Estimation error')  # secLabel='Approximation error', , secondLabel='Approximation error'
     import os
@@ -418,7 +423,7 @@ def modTest(**kwargs):
             kwSave = {'SNRs': SNRs, 'errF': errF, 'errH': errH, 'errR': errR, 'resids': resids, 'residMeans': residMeans,
                       'residMeds': residMeds, 'residNoiseMeans': residNoiseMeans, 'residNoiseMeds': residNoiseMeds,
                     'errFvect': errFvect, 'errHvect': errHvect, 'errRvect': errRvect, 'detectRate': detectRate, 'detectLen': detectLen,
-                      'detectHilRate': detectHilRate, 'detectHilLen': detectHilLen, 'detectHilLen': detectHilLen, 'detectLenRepr': detectLenRepr}
+                      'detectHilRate': detectHilRate, 'detectHilLen': detectHilLen, 'detectRateRepr': detectRateRepr, 'detectLenRepr': detectLenRepr, 'holdMeans': holdMeans, 'holdMeds': holdMeds}
             dill.dump(kwSave, f)
             f.close()
 
@@ -552,12 +557,17 @@ def main():
     ampl = 1
     decay = 10
     t = genTime(maxTime=1, Fs=Fs)
-    dFmax=0.2
+    dFmax=2
+    freq = np.linspace(start=0, stop=dFmax, num=t.size)
     plotGraphs=0
 
-
-    pulsesTest(Fs=Fs, decay=decay, t=5, SNRvals=np.arange(4, -16.5, -0.5), fileName='', carrier=100, plotGraphs=plotGraphs, experiences=102, processes=3, asyncLoop=True)
-
+   # modTest(Fs=Fs, t=1, SNRvals=np.arange(4, -16.5, -0.5), fileName='linear02AM0.pkl',
+            #carrier=100, FMfreq=freq, FMdepth=0.1, AMfreq=5, AMdepth=0.0, plotGraphs=plotGraphs, experiences=102, processes=6, asyncLoop=True)  # 6, -12
+    modTest(Fs=Fs, t=1, SNRvals=np.arange(-3, -16.5, -0.5), fileName='AMf5d025.pkl',
+            carrier=100, FMfreq=5, FMdepth=0.1, AMfreq=5, AMdepth=0.25, plotGraphs=plotGraphs, experiences=1)  # 6, -12
+    return
+    pulsesTest(Fs=Fs, decay=decay, t=5, SNRvals=np.arange(-10, -16.5, -0.5), fileName='', carrier=100, plotGraphs=plotGraphs, experiences=3)
+    return
     modTest(Fs=Fs, t=1, SNRvals=np.arange(4, -16.5, -0.5), fileName='AMf5d025.pkl',
             carrier=100, FMfreq=5, FMdepth=0.1, AMfreq=5, AMdepth=0.25, plotGraphs=plotGraphs, experiences=102, processes=3, asyncLoop=True)  # 6, -12
     modTest(Fs=Fs, t=1, SNRvals=np.arange(4, -16.5, -0.5), fileName='AMf5d02.pkl',  # np.hstack((np.arange(4, -5, -1), np.arange(-5, -7.5, -0.5), np.arange(-8, -22, -2)))
