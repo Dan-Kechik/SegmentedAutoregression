@@ -66,9 +66,11 @@ def getSimilarsByDistance(signal, tolerance=0, maxSimilarNumber=np.Inf):
     return groupedValues, groupedIndexes
 
 
-def windowing(x, fftsize=1024, overlap=4, returnShortSignal=True, joinLastSample=False, dtype=None):
-    hop = int(fftsize * (100 - overlap)/100)
+def windowing(x, fftsize=1024, overlap=4, returnShortSignal=True, joinLastSample=False, dtype=None, hop=None):
+    if hop is None:
+        hop = int(fftsize * (100 - overlap)/100)
     hop = max(hop, 1)
+    fftsize = int(fftsize)
     signal = np.array([x[i:i+fftsize] for i in range(0, len(x)-fftsize, hop)], dtype=dtype)
     if returnShortSignal and signal.size == 0:
         signal = np.zeros((1, x.size), dtype=dtype)
@@ -80,6 +82,17 @@ def windowing(x, fftsize=1024, overlap=4, returnShortSignal=True, joinLastSample
     if joinLastSample:
         samples = np.hstock(samples, samples[-1]+fftsize)
     return signal, samples
+
+
+def downsampling(signal, Fs, FsNew, overAliasing=1):
+    # Make antialiasing using FFT
+    spec = np.fft.rfft(signal)
+    overAliasing = np.min(overAliasing, 1)
+    cutSample = np.floor(FsNew*overAliasing/Fs)
+    if cutSample < len(spec):
+        spec[cutSample:len(spec)] = 0
+    filteratedSignal = np.fft.irfft(spec)
+    # Decimate signal
 
 
 def pronyDecomp(signal, order, epsilon=0, Fs=1):
@@ -160,12 +173,33 @@ def chirpResample(signal, coeff=1, shift=None, dt=1):
     # dt is 1 sample default. It assigns X axis sampling to determine coeff conveniently.
     X = np.arange(0, signal.size, dtype='int')
     signalResultFun = scipy.interpolate.interp1d(X, signal, kind='cubic')
-    if not shift:
+    if shift is None:
         shift = np.arange(start=0, stop=signal.size, step=1)*dt*coeff+1
     dXnew = np.ones((1, signal.size)) / shift
     xNew = np.cumsum(dXnew)
     xNew = xNew[xNew < X.max()]
     return signalResultFun(xNew)
+
+
+def trackResample(signal, track=1, t=None, phase_ini=None, aimed_phase=None, freqCoeff=1, targetedF=None):
+    if t.size > 1:
+        dt = t[1] - t[0]
+    else:
+        dt = t
+    # Frequency track is assumed to be uniform default. It makes possible to change frequency freqCoeff times without frequency estimation.
+    track = SM.check_like(track, signal)
+    if phase_ini is None:
+        phase_ini = np.cumsum(2*np.pi*track * dt)
+    # Take the initial frequency default.
+    if targetedF is None:
+        targetedF = track[0]*freqCoeff
+    dPhi = targetedF * 2 * np.pi * dt  # Phase step
+    if aimed_phase is None:
+        aimed_phase = np.arange(phase_ini[0], phase_ini[-1], dPhi)
+    signalResultFun = scipy.interpolate.interp1d(phase_ini, signal, kind='cubic')
+    equiPhased = signalResultFun(aimed_phase)
+    equiPhasedTime = np.linspace(0, aimed_phase.size * dt, aimed_phase.size)
+    return equiPhased, equiPhasedTime
 
 
 def chirpProny(signal, order=2, epsilon=0, Fs=1, step=0, limit=0):
@@ -180,7 +214,7 @@ def chirpProny(signal, order=2, epsilon=0, Fs=1, step=0, limit=0):
     for coeff in np.arange(step, limit, step):
         resampledChirp = chirpResample(signal, coeff, dt=dt)
         (alphaCurr, fCurr, Acurr, thetaCurr, ar_resCurr) = pronyDecomp(resampledChirp, order, epsilon, Fs)
-        residCurr = np.sum(ar_resCurr.bse ** 2)
+        residCurr = np.std(ar_resCurr.bse)/np.std(resampledChirp)
         if residCurr<resid:
             alpha = alphaCurr
             f = fCurr
@@ -228,7 +262,7 @@ def wavSpectrum(psi, rect=0, level=0, fVectIni=None, Fs=1):
 # rect == 2 -> real coefficients window to avoid phase distortions; rect == 3 -> rectangular real spectral window.
     if fVectIni is None:
         fVectIni = np.fft.rfftfreq(psi.size, 1 / Fs)
-    windSpecSided = np.fft.rfft(psi)/psi.size
+    windSpecSided = np.fft.rfft(psi)[0:len(fVectIni)]/psi.size
     windSpec = np.hstack((np.flip(windSpecSided[1:]), windSpecSided))
     windSpec = np.conj(windSpec)/np.max(np.abs(windSpec))
     freqz = np.hstack((-np.flip(fVectIni[1:]), fVectIni))
@@ -264,19 +298,21 @@ def mirrorExtend(signal, mirrorLen=0):
 
 def DFTbank(signal, Fs=1, df=None, fVectIni=None, rect=0, level=0.5, mirrorLen=0, freqLims=None, formFactor=16, **kwargs):
     (signal, num, numEnd) = mirrorExtend(signal, mirrorLen=mirrorLen)
+    if signal.size % 2 == 1:
+        signal = signal[1:]
     dt = 1/Fs
     t = np.arange(0, signal.size*dt, dt)
     # Get frequency vector for decomposition
     if not df:
         df = Fs/100  # 1/Fs
-    if not fVectIni:
+    if fVectIni is None:
         fVectIni = np.fft.rfftfreq(signal.size, 1 / Fs)
     fVect = np.unique(SM.closeInVect(fVectIni, np.arange(start=0, stop=Fs / 2, step=df))[0])
     if not freqLims is None:
         fVect = fVect[fVect<freqLims[-1]]
         if len(freqLims) == 2:
             fVect = fVect[fVect > freqLims[0]]
-    spec = np.fft.rfft(signal) / signal.size  # Get one-sided FFT
+    spec = np.fft.rfft(signal)[0:len(fVectIni)] / signal.size  # Get one-sided FFT
     representation = np.zeros((fVect.size, signal.size))  # Columns are freqs, rows are time coefficients.
     if fVect[0] == 0:  # Consider zero frequency.
         start=1
@@ -294,10 +330,13 @@ def DFTbank(signal, Fs=1, df=None, fVectIni=None, rect=0, level=0.5, mirrorLen=0
         # Drop window function coefficients.
         windSpec[np.arange(start=0, stop=startIdx, step=1, dtype='int')] = 0
         windSpec[np.arange(start=stopIdx, stop=windSpec.size, step=1, dtype='int')] = 0
-        representation[ai, :] = np.fft.irfft(windSpec[np.arange(start=startIdx, stop=stopIdx, step=1, dtype='int')])*t.size
+        oneSidedSpectrum = np.zeros_like(np.fft.rfftfreq(signal.size, 1 / Fs), dtype='complex')
+        oneSidedSpectrum[0:(stopIdx-startIdx)] = windSpec[startIdx:stopIdx]
+        representation[ai, :] = np.fft.irfft(oneSidedSpectrum)*t.size
 
     if mirrorLen:
         representation = representation[:, num[0]:numEnd[0]+num[0]+2]
+    t = np.arange(0, representation.shape[1] * dt, dt)
 
     return representation, t, fVect
 
@@ -375,7 +414,7 @@ def timeSegmentedProny(signal, Fs=1, percentLength=10, samplesLenWin=None, perce
             (alphaCurr, fCurr, Acurr, thetaCurr, residCurr, coefficientCurr) = chirpProny(windows[ai, :], Fs=Fs, order=order, step=0.05, limit=0.9)
         else:
             (alphaCurr, fCurr, Acurr, thetaCurr, ar_res) = pronyDecomp(windows[ai, :], order, Fs=Fs)
-            residCurr = np.sum(ar_res.bse ** 2)
+            residCurr = np.std(ar_res.bse)/np.std(windows[ai, :])
             coefficientCurr = 0
         alpha.append(alphaCurr)
         f.append(fCurr)
@@ -387,7 +426,21 @@ def timeSegmentedProny(signal, Fs=1, percentLength=10, samplesLenWin=None, perce
     return alpha, f, A, theta, resid, coefficient
 
 
-def thresholdRepreProny(representation, fVect, Fs=1, percentLength=5, percentOverlap=50, periodsNum=None, powerNorm=0, lowFreq=90, highFreq=210, hold=1, useChirp=False, order=2, **kwargs):
+def thresholdRepreProny(representation, fVect, **kwargs):
+
+    Fs = kwargs.get('Fs', 1)
+    percentLength = kwargs.get('percentLength', 5)
+    percentOverlap = kwargs.get('percentOverlap', 50)
+    periodsNum = kwargs.get('periodsNum', None)
+    secondsNum = kwargs.get('secondsNum', None)
+    powerNorm = kwargs.get('powerNorm', 0)
+    (lowFreq, highFreq) = kwargs.get('roughFreqs', (kwargs.get('lowFreq', 70), kwargs.get('highFreq', 150)))
+    #lowFreq = kwargs.get('lowFreq', 90)
+    #highFreq = kwargs.get('highFreq', 210)
+    hold = kwargs.get('hold', 1)
+    useChirp = kwargs.get('useChirp', False)
+    order = kwargs.get('order', 2)
+
     dt = 1/Fs
     t = np.arange(start=0, stop=representation.shape[1]*dt, step=dt)
     f = np.zeros_like(t)
@@ -399,7 +452,9 @@ def thresholdRepreProny(representation, fVect, Fs=1, percentLength=5, percentOve
     (lowFreq, highFreq) = kwargs.get('roughFreqs', (lowFreq, highFreq))
     fVectCut = kwargs.get('fVectCut', fVect[np.logical_and(fVect>=lowFreq, fVect<=highFreq)])
     # Window length is assigned in percents of the whole signal.
-    samplesLenWin = np.round(t.size*percentLength/100)
+    samplesLenWin = kwargs.get('samplesLenWin', np.round(t.size*percentLength/100))
+    if secondsNum:
+        samplesLenWin = np.round(secondsNum/dt)
 
     """""
     ???
@@ -491,6 +546,7 @@ def thresholdRepreProny(representation, fVect, Fs=1, percentLength=5, percentOve
 
 def pronyParamsEst(signal, **kwargs):
     Fs = kwargs.get('Fs', 1)
+    kwargs.update({'hold': kwargs.get('hold', 1.4)})
     formFactor = kwargs.get('formFactor', 1024)
     formFactorCurr = formFactor[0] if type(formFactor) in [tuple, list] else formFactor
     iterations = kwargs.get('iterations', 0)
@@ -498,28 +554,24 @@ def pronyParamsEst(signal, **kwargs):
     if kwargs.get('roughFreqs', 0) and iterations:  # Get preliminary track to estimate frequency borders.
         # ///Pitch detection and rough estimation///
         (representation, t0, fVectNew) = DFTbank(signal, rect=2, level=0.2, Fs=Fs, mirrorLen=0.15, df=1,
-                                                    freqLims=(50, 200), formFactor=formFactorCurr)
-        (alpha, f, A, theta, resid, coefficient) = thresholdRepreProny(representation, fVectNew, Fs=Fs, percentLength=2,
-              percentOverlap=75, lowFreq=lowFreq, highFreq=highFreq, hold=1.4, dummyVal=np.nan)
+                                                    freqLims=(lowFreq, highFreq), formFactor=formFactorCurr) # 0, 200
+        (alpha, f, A, theta, resid, coefficient) = thresholdRepreProny(representation, fVectNew, dummyVal=np.nan, **kwargs)
         # Get cumulative occurrence frequency of each value - number of values less each threshold.
-        cumF =  distributLaw(f, fVectNew)[0]
+        cumF = distributLaw(f, fVectNew)[0]
         # Define interested pitch band as increasing occurrence rate distance.
-        idxMin = np.nonzero(cumF > np.max(cumF) * 0.1)[0][0]
-        idxMax = np.nonzero(cumF < np.max(cumF) * 0.98)[0][-1]
-        if fVectNew[idxMin] < 75:
-            return alpha, f, A, theta, resid, coefficient, representation, fVectNew
-        kwargs.update({'roughFreqs': (fVectNew[idxMin], fVectNew[idxMax]), 'formFactor': formFactor[1:]})
-        kwargs.update({'iterations': iterations-1})  # Subtract recursive iterations counter.
-        (alpha, f, A, theta, res, coefficient, representation, fVectNew) = pronyParamsEst(signal, **kwargs)
+        idxMin = int(np.nonzero(cumF > np.max(cumF) * 0.1)[0][0]*0.9)
+        idxMax = int(np.nonzero(cumF < np.max(cumF) * 0.98)[0][-1]*1.1)
         if kwargs.get('plotGraphs', 0) == 2:
             SM.plotUnder(fVectNew, ((cumF, cumF[idxMin], cumF[idxMax]),))
+        kwargs.update({'roughFreqs': (fVectNew[idxMin], fVectNew[idxMax]), 'formFactor': formFactor[1:]})
+        kwargs.update({'iterations': iterations-1})  # Subtract recursive iterations counter.
+        (alpha, f, A, theta, res, coefficient, representation1, fVectNew1) = pronyParamsEst(signal, **kwargs)
         return alpha, f, A, theta, res, coefficient, representation, fVectNew
     else:
         # ///Pitch estimation///
         (representation, t0, fVectNew) = DFTbank(signal, rect=2, level=0.2, Fs=Fs, mirrorLen=0.15, df=1,
-                                                 freqLims=(50, 200), formFactor=formFactorCurr)
-        (alpha, f, A, theta, resid, coefficient) = thresholdRepreProny(representation, fVectNew, Fs=Fs, percentLength=2,
-               percentOverlap=75, lowFreq=lowFreq, highFreq=highFreq, hold=1.4, dummyVal=np.nan)
+                                                 freqLims=(lowFreq, highFreq), formFactor=formFactorCurr)
+        (alpha, f, A, theta, resid, coefficient) = thresholdRepreProny(representation, fVectNew, dummyVal=np.nan, **kwargs)
     if kwargs.get('t') and kwargs.get('plotGraphs', 0) == 2:
         t = SM.makeNP(kwargs.get('t', 1))
         t = SM.genTime(maxTime=t, Fs=Fs) if t.size == 1 else t
@@ -547,7 +599,10 @@ def distributLaw(values, scale=None, dummyVal=None):
     f = f[np.isnan(f) == False]
     if scale is None:
         step = np.mean(np.diff(np.sort(f)))
-        scale = np.arange(np.min(f), np.max(f), step)
+        if np.isnan(step):
+            scale = np.array([0.9, 1, 1.1])*f[0]
+        else:
+            scale = np.arange(np.min(f), np.max(f), step)
     cumF = np.zeros_like(scale)
     for ci in range(scale.size):
         cumF[ci] = np.count_nonzero(f < scale[ci])
@@ -630,3 +685,17 @@ def validateTrack(**kwargs):
                     validatedRanges.append(indexes)
         maxPlateau = contLen[ai]
     return validatedRanges
+
+def medianSmooth(signal, samplesWidth=None, t=None, secondsWidth=None):
+    if t is not None and secondsWidth is not None:
+        if t.size > 1:
+            dt = t[1] - t[0]
+        else:
+            dt = t
+        samplesWidth = secondsWidth/dt
+    signalWin, samples = windowing(signal, fftsize=samplesWidth, hop=1)
+    signalNew = np.zeros_like(signal)+np.nan
+    for ai in range(signalWin.shape[0]):
+        currentWindow = signalWin[ai, :]
+        signalNew[int(ai+np.floor(currentWindow.size/2))] = np.median(currentWindow)  # Estimate sample of the smoothed signal at window center.
+    return signalNew

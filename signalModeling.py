@@ -13,7 +13,7 @@ from multiprocessing import Pool
 def genTime(signal=None, length=None, maxTime=None, Fs=1, dtype=None):
     dt = 1/Fs
     if not length:
-        if signal: length = signal.size
+        if not signal is None: length = signal.size
     if not maxTime:
         maxTime = dt*length
     t = np.arange(start=0, stop=maxTime, step=dt, dtype=dtype)
@@ -180,10 +180,15 @@ def plotUnder(t, signal, yLims=None, xLims=None, secondParam=None, secondLim=Non
     return fig
 
 
-def plotRepresentation(t, representation, fVect, freq):
+def plotRepresentation(t, representation, fVect, freq=None, spectrum=None):
     fig4 = plt.figure()
-    grid = matplotlib.gridspec.GridSpec(1, 1)
-    ax_specWav = fig4.add_subplot(grid[0])
+    if spectrum is None:
+        grid = matplotlib.gridspec.GridSpec(1, 1)
+        ax_specWav = fig4.add_subplot(grid[0])
+    else:
+        ax_frequency = fig4.add_subplot(121)
+        ax_frequency.plot(fVect, spectrum)
+        ax_specWav = fig4.add_subplot(122)
     extent = t[0], t[-1], fVect[0], fVect[-1]
     ax_specWav.imshow(np.flipud(np.abs(representation)), extent=extent)
     ax_specWav.axis('auto')
@@ -443,6 +448,9 @@ def autoThresholding(H1samples, H0samples, **kwargs):
         idx = 0
     else:
         lim = np.array((np.max(scaleH1), np.min(scaleH0)))
+        if len(lim):
+            kwargout = {'limVect': np.array([]), 'trueH0': 0, 'trueH1': 0, 'falseH0': 1, 'falseH1': 1, 'optimalHold': np.nan}
+            return kwargout
         dH = np.min((scaleH0[1]-scaleH0[0], scaleH1[1]-scaleH1[0]))
         limVect = np.arange(lim[1], lim[0], dH)
         trueH0 = np.zeros_like(limVect, dtype='float64')
@@ -536,6 +544,7 @@ def modelExperience(kwdict, **kwargs):
     residSums = np.nansum(res)
     kwargs.update({'freq': freq, 'roughFreqs': (70, 150), 'iterations': 1, 'formFactor': (64, 128)})
     noise = np.random.normal(loc=0.0, scale=np.sqrt(np.sum(signal ** 2) / signal.size), size=signal.shape)
+    kwargs.update({'hold': 1.4})
     (alphaN, fN, AN, thetaN, resN, coefficientN, representationN, fVectNewN) = pa.pronyParamsEst(noise, **kwargs)
     residNoiseMeans = np.nanmean(resN)
     residNoiseMeds = np.nanmedian(resN)
