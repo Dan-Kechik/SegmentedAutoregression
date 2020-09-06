@@ -20,16 +20,27 @@ upCoefficient = 10  # Divide Fs to translate spectrum
 plotGraphs = 1
 targetedFrequency = 10
 roughFreq = (20, 250)
+processesNumber=6
 
 def main():
     fList = os.listdir(RootFold)
     wavList = []
+    processedWavs = []
     for ai in fList:
         if ai.endswith('.wav'):
             wavList.append(ai)
-    # wavList=['19.wav']
-    for currentFile in wavList:
-        myFile = os.path.join(RootFold, currentFile)
+    # wavList=['22.wav']
+    if processesNumber:
+        with Pool(processesNumber) as pool:
+            for r in pool.imap_unordered(processSingleFile, wavList):
+                processedWavs.append(r)
+    else:
+        for currentFile in wavList:
+            processSingleFile(currentFile)
+
+def processSingleFile(currentFile):
+    myFile = os.path.join(RootFold, currentFile)
+    if os.path.exists(myFile):
         print('========='+currentFile+'=========\n\n')
         Fs, signal = wavfile.read(myFile)
         Fs2 = round(Fs/downsampl)
@@ -48,7 +59,7 @@ def main():
 
         kwargs = {'Fs': Fs2*upCoefficient, 'plotGraphs': plotGraphs}
         kwargs.update({'roughFreqs': roughFreq, 'iterations': 1, 'formFactor': (32, 64), 'hold': 0})
-        (alpha, f, A, theta, res, coefficient, representation, fVectNew) = pa.pronyParamsEst(resampled_x, secondsNum=0.05, percentOverlap=75, **kwargs)  #secondsNum=0.005
+        (alpha, f, A, theta, res, coefficient, representation, fVectNew) = pa.pronyParamsEst(resampled_x, secondsNum=0.005, percentOverlap=75, **kwargs)  #secondsNum=0.005
         print('Estimated track')
         resampled_x = resampled_x[0:f.size]
         resampled_t = resampled_t[0:f.size]
@@ -71,12 +82,21 @@ def main():
             fig.axes[0].set_title("Initial signal and it's track")
             fig.axes[0].legend()
             print('Plotted smoothed track')
-
-        equiPhased, equiPhasedTime = pa.trackResample(resampled_x, track=fSmooth/upCoefficient, t=resampled_t, targetedF=targetedFrequency)
+        '''
+        with open('buff', "rb") as f:
+            kws = dill.load(f)
+        resampled_x = kws['resampled_x']
+        resampled_t = kws['resampled_t']
+        fSmooth = kws['fSmooth']
+        '''''
+        validIdxs, idx = validateTrack(fSmooth, secondsLen=5, t=resampled_t)
+        indexes = validIdxs[idx]
+        indexes = np.arange(indexes[0], indexes[1])
+        equiPhased, equiPhasedTime = pa.trackResample(resampled_x[indexes], track=fSmooth[indexes]/upCoefficient, t=resampled_t[indexes], targetedF=targetedFrequency)
         print('Resampled signal')
         if plotGraphs:
             #(alphaR, fR, AR, thetaR, resR, coefficientR, representationR, fVectNewR) = pa.pronyParamsEst(equiPhased, secondsNum=0.05, percentOverlap=75, **kwargs)  #secondsNum=0.005 periodsNum=10
-            #equiPhasedTime = equiPhasedTime[0:fR.size]
+            # equiPhasedTime = equiPhasedTime[0:fR.size]
             (representationR, t0, fVectNewR) = pa.DFTbank(equiPhased, rect=2, level=0.2, Fs=Fs2 * 10, df=0.5, freqLims=(0, 250), formFactor=128)
             figR = sm.plotRepresentation(equiPhasedTime, representationR, fVectNewR, roughFreq)
             # figR.axes[0].plot(equiPhasedTime, fR, label='Estimated track')
@@ -101,22 +121,51 @@ def main():
             figSpec.axes[0].set_title('Comparison of spectrums')
             figSpec.axes[0].legend()
             print('Plotted spectrums')
-
+            '''''
             with open(os.path.join('Out', 'resampledData', fileName+'.pkl'), "wb") as fl:
                 kwSave = {'fig': fig, 'figR': figR, 'figSpec': figSpec}
                 dill.dump(kwSave, fl)
                 fl.close()
+            '''
 
             fig.savefig(os.path.join('Out', 'resampledData', fileName+'_spectrogram.png'), bbox_inches='tight')
             figR.savefig(os.path.join('Out', 'resampledData', fileName+'_spectrogram_resampled.png'), bbox_inches='tight')
             figSpec.savefig(os.path.join('Out', 'resampledData', fileName+'_spectrum.png'), bbox_inches='tight')
-            print('Saced plotted graphs')
+            print('Saved plotted graphs')
 
             plt.close('all')
 
         equiPhased = equiPhased/np.max(np.abs(equiPhased))
         myFile = os.path.join('Out', 'resampledData', currentFile)
         scipy.io.wavfile.write(myFile, Fs2, equiPhased)
+
+        return myFile
+    else:
+        return ''
+
+def validateTrack(f, percentLenValid=30, secondsLen=None, t=None):
+    allIndexes = []
+    dff = np.abs(np.diff(f))  # Frequency jumps.
+    # Indexes of significant frequency jumps.
+    nz = np.nonzero(dff > 2)
+    nz = np.hstack((0, nz[0], f.size))
+    # Windows lengths.
+    dnz = np.diff(nz)
+    if secondsLen is not None and t is not None:
+        samplesNumMin = np.round(secondsLen/(t[1]-t[0]))
+    else:
+        samplesNumMin = percentLenValid * f.size / 100
+    validWinds = np.hstack(np.nonzero(dnz > samplesNumMin))
+    fNew = np.zeros_like(f)
+    for di in range(validWinds.size):
+        currIdxs = nz[validWinds[di]:validWinds[di] + 2]
+        allIndexes.append(currIdxs)
+        fNew[np.arange(start=currIdxs[0] + 1, stop=currIdxs[1], step=1, dtype='int')] = f[
+            np.arange(start=currIdxs[0] + 1, stop=currIdxs[1], step=1, dtype='int')]
+    validIdxs = np.nonzero(fNew)  # np.hstack(np.nonzero(fNew))
+    samplLen = [chunk[-1] - chunk[0] for chunk in allIndexes]
+    idx = np.argmax(np.array(samplLen))
+    return allIndexes, idx
 
 
 def main_test():
