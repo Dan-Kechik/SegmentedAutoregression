@@ -549,6 +549,10 @@ def pronyParamsEst(signal, **kwargs):
     kwargs.update({'hold': kwargs.get('hold', 1.4)})
     formFactor = kwargs.get('formFactor', 1024)
     formFactorCurr = formFactor[0] if type(formFactor) in [tuple, list] else formFactor
+    secondsNum = kwargs.get('secondsNum')
+    if type(secondsNum) in [tuple, list]:
+        kwargs.update({'secondsNum': secondsNum[0]})
+        secondsNum = secondsNum[-1]
     iterations = kwargs.get('iterations', 0)
     (lowFreq, highFreq) = kwargs.get('roughFreqs', (kwargs.get('lowFreq', 70), kwargs.get('highFreq', 150)))
     if kwargs.get('roughFreqs', 0) and iterations:  # Get preliminary track to estimate frequency borders.
@@ -559,12 +563,14 @@ def pronyParamsEst(signal, **kwargs):
         # Get cumulative occurrence frequency of each value - number of values less each threshold.
         cumF = distributLaw(f, fVectNew)[0]
         # Define interested pitch band as increasing occurrence rate distance.
-        idxMin = int(np.nonzero(cumF > np.max(cumF) * 0.1)[0][0]*0.9)
-        idxMax = int(np.nonzero(cumF < np.max(cumF) * 0.98)[0][-1]*1.1)
+        idxMin = int(np.nonzero(cumF > np.max(cumF) * 0.1)[0][0])
+        #idxMin = np.nonzero(cumF > cumF[idxMin])[0][0]
+        idxMax = min(int(np.nonzero(cumF < np.max(cumF) * 0.98)[0][-1]), fVectNew.size-1)
         if kwargs.get('plotGraphs', 0) == 2:
             SM.plotUnder(fVectNew, ((cumF, cumF[idxMin], cumF[idxMax]),))
         kwargs.update({'roughFreqs': (fVectNew[idxMin], fVectNew[idxMax]), 'formFactor': formFactor[1:]})
         kwargs.update({'iterations': iterations-1})  # Subtract recursive iterations counter.
+        kwargs.update({'secondsNum': secondsNum})
         (alpha, f, A, theta, res, coefficient, representation1, fVectNew1) = pronyParamsEst(signal, **kwargs)
         return alpha, f, A, theta, res, coefficient, representation, fVectNew
     else:
