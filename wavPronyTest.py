@@ -14,13 +14,13 @@ import dill
 from multiprocessing import Pool
 import datetime as dtm
 
-RootFold = r'D:\Repository\ComputeFramework\Classifier\rawdataIni'  # r'D:\Repository\Vibration Records\Стенд ВБХ скоростные режимы\25_10\393.1'  # r'D:\Repository\ComputeFramework\Classifier\rawdata'  # r'D:\Repository\ComputeFramework\FunctionalTesting\ftpTemp\bearing6213NormOr_constSpeed\rawdata'  #
+RootFold = r'D:\Repository\Phase\SegmentedAutoregression\In'
 downsampl = 50
-upCoefficient = 10  # Divide Fs to translate spectrum
+upCoefficient = 1  # Divide Fs to translate spectrum
 plotGraphs = 1
 targetedFrequency = 10
-roughFreq = (20, 250)
-processesNumber=6
+roughFreq = (1, 25)
+processesNumber=0
 
 def main():
     fList = os.listdir(RootFold)
@@ -59,7 +59,7 @@ def processSingleFile(currentFile):
 
         kwargs = {'Fs': Fs2*upCoefficient, 'plotGraphs': plotGraphs}
         kwargs.update({'roughFreqs': roughFreq, 'iterations': 1, 'formFactor': (32, 64), 'hold': 0})
-        (alpha, f, A, theta, res, coefficient, representation, fVectNew) = pa.pronyParamsEst(resampled_x, secondsNum=0.005, percentOverlap=75, **kwargs)  #secondsNum=0.005
+        (alpha, f, A, theta, res, coefficient, representation, fVectNew) = pa.pronyParamsEst(resampled_x, percentOverlap=75, df=1, **kwargs)  #secondsNum=0.005 , secondsNum=(1, 0.3)
         print('Estimated track')
         resampled_x = resampled_x[0:f.size]
         resampled_t = resampled_t[0:f.size]
@@ -90,20 +90,23 @@ def processSingleFile(currentFile):
         fSmooth = kws['fSmooth']
         '''''
         validIdxs, idx = validateTrack(fSmooth, secondsLen=5, t=resampled_t)
-        indexes = validIdxs[idx]
+        if idx.size:
+            indexes = validIdxs[idx]
+        else:
+            indexes = np.arange(0, resampled_x.size)
         indexes = np.arange(indexes[0], indexes[1])
         equiPhased, equiPhasedTime = pa.trackResample(resampled_x[indexes], track=fSmooth[indexes]/upCoefficient, t=resampled_t[indexes], targetedF=targetedFrequency)
         print('Resampled signal')
         if plotGraphs:
             #(alphaR, fR, AR, thetaR, resR, coefficientR, representationR, fVectNewR) = pa.pronyParamsEst(equiPhased, secondsNum=0.05, percentOverlap=75, **kwargs)  #secondsNum=0.005 periodsNum=10
             # equiPhasedTime = equiPhasedTime[0:fR.size]
-            (representationR, t0, fVectNewR) = pa.DFTbank(equiPhased, rect=2, level=0.2, Fs=Fs2 * 10, df=0.5, freqLims=(0, 250), formFactor=128)
+            (representationR, t0, fVectNewR) = pa.DFTbank(equiPhased, rect=2, level=0.2, Fs=Fs2 * upCoefficient, df=1, freqLims=(0, 30), formFactor=128)
             figR = sm.plotRepresentation(equiPhasedTime, representationR, fVectNewR, roughFreq)
             # figR.axes[0].plot(equiPhasedTime, fR, label='Estimated track')
             figR.axes[0].set_xlabel('Time, sec')
             figR.axes[0].set_ylabel('Frequency, Hz')
             figR.axes[0].set_title("Resampled signal and it's track")
-            figR.axes[0].legend()
+            #figR.axes[0].legend()
             print('Plotted resampled signal')
 
             figSpec = plt.figure()
@@ -164,7 +167,11 @@ def validateTrack(f, percentLenValid=30, secondsLen=None, t=None):
             np.arange(start=currIdxs[0] + 1, stop=currIdxs[1], step=1, dtype='int')]
     validIdxs = np.nonzero(fNew)  # np.hstack(np.nonzero(fNew))
     samplLen = [chunk[-1] - chunk[0] for chunk in allIndexes]
-    idx = np.argmax(np.array(samplLen))
+    samplLen = np.array(samplLen)
+    if samplLen.size:
+        idx = np.argmax(np.array(samplLen))
+    else:
+        idx = np.array([])
     return allIndexes, idx
 
 

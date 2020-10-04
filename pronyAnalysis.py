@@ -442,7 +442,7 @@ def thresholdRepreProny(representation, fVect, **kwargs):
     order = kwargs.get('order', 2)
 
     dt = 1/Fs
-    t = np.arange(start=0, stop=representation.shape[1]*dt, step=dt)
+    t = np.arange(start=0, stop=representation.shape[-1]*dt, step=dt)
     f = np.zeros_like(t)
     alpha = np.zeros_like(t)
     A = np.zeros_like(t)
@@ -543,6 +543,22 @@ def thresholdRepreProny(representation, fVect, **kwargs):
 
     return result
 
+def fftFiltrate(signal, freqLims, Fs=1):
+    fVect = np.fft.rfftfreq(signal.size, 1 / Fs)
+    oneSidedSpectrum = np.fft.rfft(signal)[0:len(fVect)] / signal.size
+    oneSidedSpectrum[fVect<freqLims[0]] = 0
+    oneSidedSpectrum[fVect>freqLims[1]] = 0
+    return fVect, np.fft.irfft(oneSidedSpectrum) * signal.size
+
+def conventionalProny(signal, **kwargs):
+    Fs = kwargs.get('Fs', 1)
+    (lowFreq, highFreq) = kwargs.get('roughFreqs', (kwargs.get('lowFreq', 70), kwargs.get('highFreq', 150)))
+    signalFiltrated = np.zeros((1, signal.size), dtype=signal.dtype)
+    fVect, signalFiltrated[0, :] = fftFiltrate(signal, (lowFreq, highFreq), Fs=Fs)
+    centralFreq = np.zeros((1, 1), dtype='float64')
+    centralFreq[0, 0] = np.mean(np.array((lowFreq, highFreq)))
+    (alpha, f, A, theta, resid, coefficient) = thresholdRepreProny(signalFiltrated, centralFreq, dummyVal=np.nan, **kwargs)
+    return alpha, f, A, theta, resid, coefficient, signalFiltrated, centralFreq
 
 def pronyParamsEst(signal, **kwargs):
     Fs = kwargs.get('Fs', 1)
@@ -553,29 +569,33 @@ def pronyParamsEst(signal, **kwargs):
     (lowFreq, highFreq) = kwargs.get('roughFreqs', (kwargs.get('lowFreq', 70), kwargs.get('highFreq', 150)))
     if kwargs.get('roughFreqs', 0) and iterations:  # Get preliminary track to estimate frequency borders.
         # ///Pitch detection and rough estimation///
-        (representation, t0, fVectNew) = DFTbank(signal, rect=2, level=0.2, Fs=Fs, mirrorLen=0.15, df=1,
+        (representation, t0, fVectNew) = DFTbank(signal, rect=2, level=0.2, Fs=Fs, mirrorLen=0.15, df=kwargs.get('df', 1),
                                                     freqLims=(lowFreq, highFreq), formFactor=formFactorCurr) # 0, 200
-        (alpha, f, A, theta, resid, coefficient) = thresholdRepreProny(representation, fVectNew, dummyVal=np.nan, **kwargs)
+        (alpha, f, A, theta, resid, coefficient) = thresholdRepreProny(representation, fVectNew, secondsNum=0.075, dummyVal=np.nan, **kwargs) #secondsNum=0.15=1.5 periodsNum=7
         # Get cumulative occurrence frequency of each value - number of values less each threshold.
         cumF = distributLaw(f, fVectNew)[0]
         # Define interested pitch band as increasing occurrence rate distance.
-        idxMin = int(np.nonzero(cumF > np.max(cumF) * 0.1)[0][0]*0.9)
-        idxMax = int(np.nonzero(cumF < np.max(cumF) * 0.98)[0][-1]*1.1)
+        idxMin = int(np.nonzero(cumF > np.max(cumF) * 0.1)[0][0])
+        idxMax = int(np.nonzero(cumF < np.max(cumF) * 0.98)[0][-1])
         if kwargs.get('plotGraphs', 0) == 2:
             SM.plotUnder(fVectNew, ((cumF, cumF[idxMin], cumF[idxMax]),))
+            print('Estimated pitch limits:')
+            print((fVectNew[idxMin], fVectNew[idxMax]))
         kwargs.update({'roughFreqs': (fVectNew[idxMin], fVectNew[idxMax]), 'formFactor': formFactor[1:]})
         kwargs.update({'iterations': iterations-1})  # Subtract recursive iterations counter.
         (alpha, f, A, theta, res, coefficient, representation1, fVectNew1) = pronyParamsEst(signal, **kwargs)
         return alpha, f, A, theta, res, coefficient, representation, fVectNew
     else:
         # ///Pitch estimation///
-        (representation, t0, fVectNew) = DFTbank(signal, rect=2, level=0.2, Fs=Fs, mirrorLen=0.15, df=1,
+        (representation, t0, fVectNew) = DFTbank(signal, rect=2, level=0.2, Fs=Fs, mirrorLen=0.15, df=kwargs.get('df', 1),
                                                  freqLims=(lowFreq, highFreq), formFactor=formFactorCurr)
-        (alpha, f, A, theta, resid, coefficient) = thresholdRepreProny(representation, fVectNew, dummyVal=np.nan, **kwargs)
+        (alpha, f, A, theta, resid, coefficient) = thresholdRepreProny(representation, fVectNew, secondsNum=0.025, dummyVal=np.nan, **kwargs) #, secondsNum=0.075=0.5periodsNum=3
     if kwargs.get('t') and kwargs.get('plotGraphs', 0) == 2:
         t = SM.makeNP(kwargs.get('t', 1))
         t = SM.genTime(maxTime=t, Fs=Fs) if t.size == 1 else t
         fInd = int(SM.closeInVect(fVectNew, np.nanmedian(f))[1])
+        print('Frequency RMSE:')
+        print(rms(f-kwargs.get('freq'), True))
         SM.plotUnder(t, (signal, alpha,  (f, kwargs.get('freq'))), secondParam=resid,
                   labels=('Signal', 'Estimated decay', ('Estimated frequency', 'Real frequency')), secondLabel='Error',
                   secondLim=(0, np.nanmedian(resid)*1.1), xlabel='Time, sec', ylabel=('Modeled signal', 'Exponential decay', 'Frequency'), secLabel='Approximation error',

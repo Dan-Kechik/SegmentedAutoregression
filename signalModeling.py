@@ -54,10 +54,13 @@ def check_like(a, ref=None, dtype=None, order='K', subok=True, shape=None, sq=0)
     return a
 
 
-def frequencyModulated(f, t, f0=None, depth=0, phi0=0):
+def frequencyModulated(f, t, f0=None, depth=0, phi0=0, linear=False):
     f = makeNP(f)
     t = makeNP(t)
     dt = np.diff(np.hstack((0, t)))  # Non-uniform sampling interval is considered.
+    if linear:
+        f = f*t  # Implement formula: f = f0(1+ft), where f0 - initial frequency, f - linear coefficient.
+        depth = 1
     if not f0 is None:
         if f.size == 1:
             f = np.sin(2*np.pi*f*t)
@@ -131,15 +134,22 @@ def plotSignal(signal, t=None, specKind=None):
     return fig
 
 
-def plotUnder(t, signal, yLims=None, xLims=None, secondParam=None, secondLim=None, labels=None, secondLabel=None, xlabel=None, ylabel=None, secLabel=None):
+def plotUnder(t, signal, yLims=None, xLims=None, secondParam=None, secondLim=None, labels=None, secondLabel=None, xlabel=None, ylabel=None, secLabel=None, fig=None):
     t = makeNP(t, dtype='float64')
     linestyles = ('-', '--', ':', '-.')
-    fig = plt.figure()
+    if fig is None:
+        fig = plt.figure()
     fig.show()
     grid = matplotlib.gridspec.GridSpec(len(signal), 1)
     for ai in range(len(signal)):
         if signal[ai] is None:
             continue
+        '''''
+        if len(fig.axes) < ai+1:
+            ax_curr = fig.add_subplot(grid[ai])
+        else:
+            ax_curr = fig.axes[ai]
+        '''
         ax_curr = fig.add_subplot(grid[ai])
         lines = []
         labelCurr = labels[ai] if type(labels) in [tuple, list] else labels
@@ -200,10 +210,12 @@ def plotRepresentation(t, representation, fVect, freq=None, spectrum=None):
 
 def pulsesParamsEst(signal, **kwargs):
     Fs = kwargs.get('Fs', 1)
+    (lowFreq, highFreq) = kwargs.get('roughFreqs', (75, 145))
+    hold = kwargs.get('hold', 0)
     (representation, t0, fVectNew) = pa.DFTbank(signal, rect=2, level=0.2, Fs=Fs, mirrorLen=0.15, df=1,
-                                                freqLims=(50, 200), formFactor=128)
+                                                freqLims=(lowFreq, highFreq), formFactor=kwargs.get('formFactor', 128))
     (alpha, f, A, theta, resid, coefficient) = pa.thresholdRepreProny(representation, fVectNew, Fs=Fs, periodsNum=10,
-        lowFreq=75, highFreq=145, hold=1.4, errorThresh=0.8, dummyVal=np.nan) #, diffHold=1
+        lowFreq=lowFreq, highFreq=highFreq, hold=hold, errorThresh=0.8, dummyVal=np.nan) #, diffHold=1
     tempDecay = np.zeros_like(alpha)+alpha
     tempDecay[np.isnan(alpha) == True] = -100
     timeSamples = np.nonzero(np.diff(np.hstack((-100, tempDecay)))>50)[0]
@@ -295,7 +307,7 @@ def modelModulated(**kwargs):
     t = makeNP(kwargs.get('t', 1))
     Fs = kwargs.get('Fs', 1)
     t = genTime(maxTime=t, Fs=Fs) if t.size == 1 else t
-    (FMcomp, freq) = frequencyModulated(kwargs.get('FMfreq', 0), t, f0=kwargs.get('carrier', 0.1*Fs), depth=kwargs.get('FMdepth', 0), phi0=0)
+    (FMcomp, freq) = frequencyModulated(kwargs.get('FMfreq', 0), t, f0=kwargs.get('carrier', 0.1*Fs), depth=kwargs.get('FMdepth', 0), phi0=0, linear=kwargs.get('linear', False))
     ams = AMsign(t, FMcomp, kwargs.get('AMfreq', 0), depth=kwargs.get('AMdepth', 0))
     signalTupl = pa.awgn(ams[0], SNRdB=makeNP(kwargs.get('SNR', np.inf)))
     return (signalTupl[0], t, freq)
@@ -487,6 +499,14 @@ def cumInt(vals):
     else:
         return np.array((0,))
 
+def conventionalPronyExperience(kwdict, **kwargs):
+    if type(kwdict) is dict:
+        kwargs.update(kwdict)
+    Fs = kwargs.get('Fs', 1)
+    # //Get signal//
+    (signal, t, freq) = modelModulated(**kwargs)
+    alpha, f, A, theta, resid, coefficient, signalFiltrated, fVect = pa.conventionalProny(signal, **kwargs)
+
 
 def modelExperience(kwdict, **kwargs):
     if type(kwdict) is dict:
@@ -503,17 +523,20 @@ def modelExperience(kwdict, **kwargs):
     # //Get signal//
     (signal, t, freq) = modelModulated(**kwargs)
     # //Get Prony track//
-    kwargs.update({'freq': freq, 'roughFreqs': (70, 150), 'iterations': 1, 'formFactor': (64, 128)})
+    kwargs.update({'freq': freq, 'roughFreqs': (50, 200), 'iterations': 1, 'formFactor': (64, 128), 'hold': 0})
     # (alpha, f, A, theta, res) = modParamsEst(signal, **kwargs)[0:5]
-    (alpha, f, A, theta, res, coefficient, representation, fVectNew) = pa.pronyParamsEst(signal, **kwargs)
-    kwargs.update({'track': f, 'hold': 8})
+    if kwargs.get('conventionalProny', False):
+        (alpha, f, A, theta, res, coefficient, representation, fVectNew) = pa.conventionalProny(signal, **kwargs)
+    else:
+        (alpha, f, A, theta, res, coefficient, representation, fVectNew) = pa.pronyParamsEst(signal, **kwargs)
+    kwargs.update({'track': 0+f, 'hold': 8})
     VT = pa.validateTrack(**kwargs)
     if len(VT) > 0:
         detectRate += 1
         detectLen += np.array(VT).size / f.size
     # //Get Hilbert track//
     hilFreq = pa.hilbertTrack(representation, fVectNew, kwargs.get('Fs', 1), 100)
-    kwargs.update({'track': hilFreq, 'hold': 8})
+    kwargs.update({'track': 0+hilFreq, 'hold': 8})
     VT = pa.validateTrack(**kwargs)
     if len(VT) > 0:
         detectHilRate += 1
@@ -522,7 +545,7 @@ def modelExperience(kwdict, **kwargs):
     kwargs.update({'formFactor': 1024})
     (repFreq, sc, peaks) = pa.scalogramFinding(signal=signal, rect=2, level=0.2, mirrorLen=0.15, df=0.05,
                                                freqLims=(50, 200), **kwargs)  # Fs and plot enabling.
-    kwargs.update({'track': repFreq, 'hold': 8})
+    kwargs.update({'track': 0+repFreq, 'hold': 8})
     VT = pa.validateTrack(**kwargs)
     if len(VT) > 0:
         detectRateRepr += 1
@@ -542,10 +565,11 @@ def modelExperience(kwdict, **kwargs):
     residMeans = np.nanmean(res)
     residMeds = np.nanmedian(res)
     residSums = np.nansum(res)
-    kwargs.update({'freq': freq, 'roughFreqs': (70, 150), 'iterations': 1, 'formFactor': (64, 128)})
+    kwargs.update({'freq': freq, 'roughFreqs': (50, 200), 'iterations': 1, 'formFactor': (512, 512)}) #(64, 128)
     noise = np.random.normal(loc=0.0, scale=np.sqrt(np.sum(signal ** 2) / signal.size), size=signal.shape)
-    kwargs.update({'hold': 1.4})
-    (alphaN, fN, AN, thetaN, resN, coefficientN, representationN, fVectNewN) = pa.pronyParamsEst(noise, **kwargs)
+    kwargs.update({'hold': 0})
+    #(alphaN, fN, AN, thetaN, resN, coefficientN, representationN, fVectNewN) = pa.pronyParamsEst(noise, **kwargs)
+    (alphaN, fN, AN, thetaN, resN, coefficientN, representationN, fVectNewN) = (alpha, f, A, theta, res, coefficient, representation, fVectNew)
     residNoiseMeans = np.nanmean(resN)
     residNoiseMeds = np.nanmedian(resN)
     residNoiseSums = np.nansum(resN)
