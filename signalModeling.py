@@ -523,7 +523,7 @@ def modelExperience(kwdict, **kwargs):
     # //Get signal//
     (signal, t, freq) = modelModulated(**kwargs)
     # //Get Prony track//
-    kwargs.update({'freq': freq, 'roughFreqs': (50, 200), 'iterations': 1, 'formFactor': (64, 128), 'hold': 0})
+    kwargs.update({'freq': freq, 'iterations': 1})
     # (alpha, f, A, theta, res) = modParamsEst(signal, **kwargs)[0:5]
     if kwargs.get('conventionalProny', False):
         (alpha, f, A, theta, res, coefficient, representation, fVectNew) = pa.conventionalProny(signal, **kwargs)
@@ -536,17 +536,18 @@ def modelExperience(kwdict, **kwargs):
         detectLen += np.array(VT).size / f.size
     # //Get Hilbert track//
     hilFreq = pa.hilbertTrack(representation, fVectNew, kwargs.get('Fs', 1), 100)
-    kwargs.update({'track': 0+hilFreq, 'hold': 8})
-    VT = pa.validateTrack(**kwargs)
+    additArgs = copy.deepcopy(kwargs)
+    additArgs.update({'track': 0+hilFreq, 'hold': 8})
+    VT = pa.validateTrack(**additArgs)
     if len(VT) > 0:
         detectHilRate += 1
         detectHilLen += np.array(VT).size / hilFreq.size
     # //Get representation track//
-    kwargs.update({'formFactor': 1024})
+    additArgs.update({'formFactor': 1024})
     (repFreq, sc, peaks) = pa.scalogramFinding(signal=signal, rect=2, level=0.2, mirrorLen=0.15, df=0.05,
-                                               freqLims=(50, 200), **kwargs)  # Fs and plot enabling.
-    kwargs.update({'track': 0+repFreq, 'hold': 8})
-    VT = pa.validateTrack(**kwargs)
+                                               freqLims=(50, 200), **additArgs)  # Fs and plot enabling.
+    additArgs.update({'track': 0+repFreq, 'hold': 8})
+    VT = pa.validateTrack(**additArgs)
     if len(VT) > 0:
         detectRateRepr += 1
         detectLenRepr += np.array(VT).size / repFreq.size
@@ -565,11 +566,10 @@ def modelExperience(kwdict, **kwargs):
     residMeans = np.nanmean(res)
     residMeds = np.nanmedian(res)
     residSums = np.nansum(res)
-    kwargs.update({'freq': freq, 'roughFreqs': (50, 200), 'iterations': 1, 'formFactor': (512, 512)}) #(64, 128)
+    kwargs.update({'freq': freq, 'iterations': 1})
     noise = np.random.normal(loc=0.0, scale=np.sqrt(np.sum(signal ** 2) / signal.size), size=signal.shape)
     kwargs.update({'hold': 0})
-    #(alphaN, fN, AN, thetaN, resN, coefficientN, representationN, fVectNewN) = pa.pronyParamsEst(noise, **kwargs)
-    (alphaN, fN, AN, thetaN, resN, coefficientN, representationN, fVectNewN) = (alpha, f, A, theta, res, coefficient, representation, fVectNew)
+    (alphaN, fN, AN, thetaN, resN, coefficientN, representationN, fVectNewN) = pa.pronyParamsEst(noise, **kwargs)
     residNoiseMeans = np.nanmean(resN)
     residNoiseMeds = np.nanmedian(resN)
     residNoiseSums = np.nansum(resN)
@@ -593,20 +593,21 @@ def main():
     dFmax=2
     freq = np.linspace(start=0, stop=dFmax, num=t.size)
     plotGraphs=0
+    roughFreq = (50, 200)
+    kwargs = {'Fs': Fs, 'SNRvals': np.arange(15, -12.5, -0.5), 'carrier': 100, 'plotGraphs': plotGraphs, 'experiences': 104, 'processes': 8, 'asyncLoop': True}
+    kwargs.update({'roughFreqs': roughFreq, 'formFactor': (64, 128), 'hold': 0, 'secondsNum': (0.075, 0.025), 'percentOverlap': 75})
 
    # modTest(Fs=Fs, t=1, SNRvals=np.arange(4, -16.5, -0.5), fileName='linear02AM0.pkl',
             #carrier=100, FMfreq=freq, FMdepth=0.1, AMfreq=5, AMdepth=0.0, plotGraphs=plotGraphs, experiences=102, processes=6, asyncLoop=True)  # 6, -12
-    modTest(Fs=Fs, t=1, SNRvals=np.arange(-3, -16.5, -0.5), fileName='AMf5d025.pkl',
-            carrier=100, FMfreq=5, FMdepth=0.1, AMfreq=5, AMdepth=0.25, plotGraphs=plotGraphs, experiences=1)  # 6, -12
+    #modTest(Fs=Fs, t=1, SNRvals=np.arange(-3, -16.5, -0.5), fileName='AMf5d025.pkl',
+           # carrier=100, FMfreq=5, FMdepth=0.1, AMfreq=5, AMdepth=0.25, plotGraphs=plotGraphs, experiences=1)  # 6, -12
+    #return
+    pulsesTest(decay=decay, t=5, fileName='pulses_104trials', **kwargs)
     return
-    pulsesTest(Fs=Fs, decay=decay, t=5, SNRvals=np.arange(-10, -16.5, -0.5), fileName='', carrier=100, plotGraphs=plotGraphs, experiences=3)
-    return
-    modTest(Fs=Fs, t=1, SNRvals=np.arange(4, -16.5, -0.5), fileName='AMf5d025.pkl',
-            carrier=100, FMfreq=5, FMdepth=0.1, AMfreq=5, AMdepth=0.25, plotGraphs=plotGraphs, experiences=102, processes=3, asyncLoop=True)  # 6, -12
-    modTest(Fs=Fs, t=1, SNRvals=np.arange(4, -16.5, -0.5), fileName='AMf5d02.pkl',  # np.hstack((np.arange(4, -5, -1), np.arange(-5, -7.5, -0.5), np.arange(-8, -22, -2)))
-            carrier=100, FMfreq=5, FMdepth=0.1, AMfreq=5, AMdepth=0.2, plotGraphs=plotGraphs, experiences=102, processes=3, asyncLoop=True)  # 6, -12
-    modTest(Fs=Fs, t=1, SNRvals=np.arange(4, -16.5, -0.5), fileName='AMf3d02.pkl',
-            carrier=100, FMfreq=5, FMdepth=0.1, AMfreq=3, AMdepth=0.2, plotGraphs=plotGraphs, experiences=102, processes=3, asyncLoop=True)  # 6, -12
+    modTest(t=1, fileName='pulses_104trials.pkl', FMfreq=5, FMdepth=0.1, AMfreq=5, AMdepth=0.25, **kwargs)  # 6, -12
+    # np.hstack((np.arange(4, -5, -1), np.arange(-5, -7.5, -0.5), np.arange(-8, -22, -2)))
+    #modTest(t=1, fileName='AMf5d02.pkl', FMfreq=5, FMdepth=0.1, AMfreq=5, AMdepth=0.2, **kwargs)  # 6, -12
+    #modTest(t=1, fileName='AMf3d02.pkl', FMfreq=5, FMdepth=0.1, AMfreq=3, AMdepth=0.2, **kwargs)  # 6, -12
     return
 
     h0Sam = np.random.normal(loc=0.0, scale=1/3, size=(1, 100))  # np.arange(0.1, 1.1, 0.05)
