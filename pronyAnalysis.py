@@ -5,6 +5,7 @@ import matplotlib
 from matplotlib import pyplot as plt
 from scipy.signal import hilbert
 import signalModeling as SM
+import random
 #from numba import jit
 
 
@@ -574,8 +575,8 @@ def pronyParamsEst(signal, **kwargs):
     if kwargs.get('roughFreqs', 0) and iterations:  # Get preliminary track to estimate frequency borders.
         # ///Pitch detection and rough estimation///
         (representation, t0, fVectNew) = DFTbank(signal, rect=2, level=0.2, Fs=Fs, mirrorLen=0.15, df=kwargs.get('df', 1),
-                                                    freqLims=(lowFreq, highFreq), formFactor=formFactorCurr) # 0, 200
-        (alpha, f, A, theta, resid, coefficient) = thresholdRepreProny(representation, fVectNew, secondsNum=0.075, dummyVal=np.nan, **kwargs) #secondsNum=0.15=1.5 periodsNum=7
+                                                    freqLims=(lowFreq, highFreq), formFactor=formFactorCurr)
+        (alpha, f, A, theta, resid, coefficient) = thresholdRepreProny(representation, fVectNew, dummyVal=np.nan, **kwargs)
         # Get cumulative occurrence frequency of each value - number of values less each threshold.
         cumF = distributLaw(f, fVectNew)[0]
         # Define interested pitch band as increasing occurrence rate distance.
@@ -594,7 +595,7 @@ def pronyParamsEst(signal, **kwargs):
         # ///Pitch estimation///
         (representation, t0, fVectNew) = DFTbank(signal, rect=2, level=0.2, Fs=Fs, mirrorLen=0.15, df=kwargs.get('df', 1),
                                                  freqLims=(lowFreq, highFreq), formFactor=formFactorCurr)
-        (alpha, f, A, theta, resid, coefficient) = thresholdRepreProny(representation, fVectNew, secondsNum=0.025, dummyVal=np.nan, **kwargs) #, secondsNum=0.075=0.5periodsNum=3
+        (alpha, f, A, theta, resid, coefficient) = thresholdRepreProny(representation, fVectNew, dummyVal=np.nan, **kwargs)
     if kwargs.get('t') and kwargs.get('plotGraphs', 0) == 2:
         t = SM.makeNP(kwargs.get('t', 1))
         t = SM.genTime(maxTime=t, Fs=Fs) if t.size == 1 else t
@@ -724,3 +725,48 @@ def medianSmooth(signal, samplesWidth=None, t=None, secondsWidth=None):
         currentWindow = signalWin[ai, :]
         signalNew[int(ai+np.floor(currentWindow.size/2))] = np.median(currentWindow)  # Estimate sample of the smoothed signal at window center.
     return signalNew
+
+def getList(param):
+    if not type(param) in [tuple, list, type(None)]:
+        param = [param]
+    return param
+
+def setList(param, name, kwargs):
+    if not type(param) in [tuple, list]:
+        kwargs.update({name: param})
+    else:
+        kwargs.update({name: param[1:]})
+    return kwargs
+
+def randomDeviation(argDict, **kwargs):
+    paramNames = getList(kwargs.get('paramNames'))
+    percentDeviation = SM.check_like(kwargs.get('percentDeviation'), np.arange(len(paramNames)))
+    absoleteDeviation = SM.check_like(kwargs.get('absoleteDeviation'), percentDeviation)
+    negativeDeviation = SM.check_like(kwargs.get('negativeDeviation', 0), percentDeviation)
+    for ai, name in enumerate(paramNames):
+        if not type('name') is str:
+            raise(TypeError)
+        param = SM.makeNP(argDict.get(name))
+        if not type(percentDeviation) is None:
+            percentVariation = SM.makeNP(percentDeviation[ai])
+            absoleteVariation = percentVariation*param/100
+        elif not type(absoleteDeviation) is None:
+            absoleteValue = SM.makeNP(absoleteDeviation[ai])
+            if not np.isnan(absoleteValue):
+                absoleteVariation = absoleteValue
+        else:
+            raise (TypeError)
+        if np.any(np.isnan(absoleteVariation)):
+            raise(ValueError)
+        normalizedRandom = SM.makeNP([random.random() for i in range(param.size)])
+        if negativeDeviation[ai]:
+            deviation = absoleteVariation*(normalizedRandom*2-1)
+        else:
+            deviation = absoleteVariation*normalizedRandom
+        argDict.update({name: param+deviation})
+
+def getSamplesNum(kwargs):
+    periodsNum = kwargs.get('periodsNum', None)
+    secondsNum = kwargs.get('secondsNum', None)
+    samplesLenWin = kwargs.get('samplesLenWin', None)
+    percentLength = kwargs.get('percentLength', None)

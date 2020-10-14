@@ -2,7 +2,11 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
+      <module fileurl="file://$PROJECT_DIR$/.idea/SegmentedAutoregression.iml" filepath="$PROJECT_DIR$/.idea/SegmentedAutoregression.iml" />
       <module fileurl="file://$PROJECT_DIR$/.idea/autoRegressPy.iml" filepath="$PROJECT_DIR$/.idea/autoRegressPy.iml" />
+      <module fileurl="file://$PROJECT_DIR$/../../reportMaker/.idea/reportMaker.iml" filepath="$PROJECT_DIR$/../../reportMaker/.idea/reportMaker.iml" />
+      <module fileurl="file://$PROJECT_DIR$/../../ComputeFramework/FunctionalTesting/testsRunPython/.idea/testsRunPython.iml" filepath="$PROJECT_DIR$/../../ComputeFramework/FunctionalTesting/testsRunPython/.idea/testsRunPython.iml" />
+      <module fileurl="file://$PROJECT_DIR$/../../youTubePlayListFastAdditor/.idea/youTubePlayListFastAdditor.iml" filepath="$PROJECT_DIR$/../../youTubePlayListFastAdditor/.idea/youTubePlayListFastAdditor.iml" />
     </modules>
   </component>
 </project>

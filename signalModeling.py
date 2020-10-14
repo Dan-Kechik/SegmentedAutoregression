@@ -7,8 +7,19 @@ import pronyAnalysis as pa
 from matplotlib import cm
 import copy
 import dill
+from scipy.io import wavfile
+import os
 from multiprocessing import Pool
 
+
+def saveAudio(kwargs, signal):
+    mySNR = makeNP(kwargs.get('SNR', np.inf))
+    if kwargs.get('writeAudio', False):
+        name = kwargs.get('fileName', '').rstrip('pkl') + str(float(mySNR)) + ' dB'
+        if kwargs.get('trialNumber', -1) > -1:
+            name = name + ' ' + str(kwargs.get('trialNumber', 0)) + ' trial'
+        myFile = os.path.join('Out', name + '.wav')
+        scipy.io.wavfile.write(myFile, kwargs.get('Fs', 1), signal)
 
 def genTime(signal=None, length=None, maxTime=None, Fs=1, dtype=None):
     dt = 1/Fs
@@ -39,11 +50,13 @@ def validateTrack(f):
 
 def makeNP(values, dtype=None):
     if not type(values) is np.ndarray:
-        values = np.array([values], dtype=dtype)
+        values = np.array(pa.getList(values), dtype=dtype)
     return values
 
 
 def check_like(a, ref=None, dtype=None, order='K', subok=True, shape=None, sq=0):
+    if a is None:
+        return a
     if not ref is None:
         a = makeNP(a)
         ref = makeNP(ref)
@@ -82,15 +95,18 @@ def AMsign(t, carr, envel, depth=1):
     return signal, carr, envel
 
 
-def expPulses(t, timeSamples, decay, amplitude):
+def expPulses(t, timeSamples, decay, amplitude, randomArgs=None):
     signal = np.zeros_like(t)
     realTimeSamples = np.zeros_like(timeSamples, dtype='int')
-    decay = np.array(decay)
-    amplitude = np.array(amplitude)
+    decay = makeNP(decay)
+    amplitude = makeNP(amplitude)
     if decay.size<timeSamples.size:
         decay = np.full_like(timeSamples, decay)
     if amplitude.size<timeSamples.size:
         amplitude = np.full_like(timeSamples, amplitude)
+    if not randomArgs is None and not randomArgs.get('paramNames') is None:
+        paramArgs = {'timeSamples': timeSamples, 'decay': decay, 'amplitude': amplitude}
+        pa.randomDeviation(paramArgs, **randomArgs)  # Update variables contained in parameters dictionary.
     for ai in range(timeSamples.size):
         pulse = amplitude[ai]*np.exp(-decay[ai]*t)
         realTimeSamples[ai] = closeInVect(t, timeSamples[ai])[1]
@@ -238,9 +254,10 @@ def modelPulses(**kwargs):
     t = genTime(maxTime=t, Fs=Fs) if t.size == 1 else t
     timeSituations = np.arange(start=kwargs.get('start', t[0]), stop=kwargs.get('stop', t[-1]), step=kwargs.get('step', (t[-1]-t[0])/10))
     timeSamples = closeInVect(t, timeSituations)[0]
-    envel = expPulses(t, timeSamples, decay, ampl)[0] - np.max(ampl)
+    envel = expPulses(t, timeSamples, decay, ampl, kwargs)[0] - np.max(ampl)
     ams = AMsign(t, kwargs.get('carrier', 0.1*Fs), envel, depth=1)
     signalTupl = pa.awgn(ams[0], SNRdB=makeNP(kwargs.get('SNR', np.inf)))
+    saveAudio(kwargs, signalTupl[0])
     return (signalTupl[0],) + (timeSamples, t)
 
 
@@ -251,11 +268,17 @@ def pulsesTest(**kwargs):
     errT = np.zeros_like(SNRs, dtype='float64')
     errPer = np.zeros_like(SNRs, dtype='float64')
     resids = np.zeros_like(SNRs, dtype='float64')
+    holdMeans = []
+    residMeans = []
+    residNoiseMeans = []
+    periodicityDetected = np.zeros_like(SNRs, dtype='float64')
     for ai, SNR in enumerate(kwargs.get('SNRvals', [np.inf])):
-        kwargs.update({'SNR':SNR})
+        residMeans.append(np.zeros_like(np.arange(kwargs.get('experiences', 1)), dtype='float64'))
+        residNoiseMeans.append(np.zeros_like(np.arange(kwargs.get('experiences', 1)), dtype='float64'))
+        kwargs.update({'SNR': SNR})
         (signal, timeSamples, t) = modelPulses(**kwargs)  # Get model parameters for comparison.
         if not kwargs.get('processes') is None:
-            kwCopy = [copy.deepcopy(kwargs) for i in range(kwargs.get('experiences', 1))]
+            kwCopy = [dict(copy.deepcopy(kwargs), **{'trialNumber': i}) for i in range(kwargs.get('experiences', 1))]
             with Pool(processes=kwargs.get('processes')) as pool:
                 if kwargs.get('asyncLoop', False):
                     result = []
@@ -267,9 +290,17 @@ def pulsesTest(**kwargs):
                 pool.join()
         for bi in range(kwargs.get('experiences', 1)):
             if not kwargs.get('processes') is None:
-                (alpha, f, A, theta, res, timeSamplesIdsEst) = result[bi]
+                (alpha, f, A, theta, res, timeSamplesIdsEst, alphaN, fN, AN, thetaN, resN, timeSamplesIdsEstN) = result[bi]
             else:
-                (alpha, f, A, theta, res, timeSamplesIdsEst) = pulseExperience(kwargs)
+                kwargs.update({'trialNumber': bi})
+                (alpha, f, A, theta, res, timeSamplesIdsEst, alphaN, fN, AN, thetaN, resN, timeSamplesIdsEstN) = pulseExperience(kwargs)
+            # Pitch detection
+            residMeans[ai][bi] = np.nanmean(res)
+            residNoiseMeans[ai][bi] = np.nanmean(resN)
+            # Periodicity detection
+            peakDist = np.diff(timeSamplesIdsEst)
+            periodicityDetected[ai] += int(np.std(peakDist)/np.mean(peakDist) < kwargs.get('periodicityDetectionHold', 0.25))
+            # Pitch estimation
             errAlph[ai] += pa.rms(alpha-makeNP(kwargs.get('decay', 0)))
             errF[ai] += pa.rms(f - makeNP(kwargs.get('carrier', 0)))
             resids[ai] += np.nanmean(res[res<np.inf])
@@ -277,6 +308,8 @@ def pulsesTest(**kwargs):
             errT[ai] += pa.rms(t[timeSamplesIdsEst] - timeSamplesTemp)
             errPer[ai] += pa.rms(np.mean(np.diff(timeSamples)) - np.mean(np.diff(t[timeSamplesIdsEst])))
         print(kwargs.get('fileName', 'pulseTest')+' {} SNR'.format(SNR))
+        holdMeans.append(autoThresholding(residNoiseMeans[ai], residMeans[ai]))
+    periodicityDetected /= kwargs.get('experiences', 1)
     errAlph /= kwargs.get('experiences', 1)
     errF /= kwargs.get('experiences', 1)
     errT /= kwargs.get('experiences', 1)
@@ -284,7 +317,6 @@ def pulsesTest(**kwargs):
     resids /= kwargs.get('experiences', 1)
     plotUnder(SNRs, (errAlph, errF, errT), ylabel=('Decay RMSE', 'Frequency RMSE', 'Time RMSE'),  # , secondParam=resids
               xlabel='SNR, dB', labels='Estimation error')  # secLabel='Approximation error', , secondLabel='Approximation error'
-    import os
     if not (os.path.exists('Out') and os.path.isdir('Out')):
         os.mkdir('Out')
     fName = kwargs.get('fileName')
@@ -292,7 +324,8 @@ def pulsesTest(**kwargs):
         if fName == '':
             fName = 'pulsesEstimation.pkl'
         with open(os.path.join('Out', fName), "wb") as f:
-            kwSave = {'SNRs': SNRs, 'errAlph': errAlph, 'errF': errF, 'errT': errT, 'errPer': errPer, 'resids': resids}
+            kwSave = {'SNRs': SNRs, 'errAlph': errAlph, 'errF': errF, 'errT': errT, 'errPer': errPer, 'resids': resids,
+                      'periodicityDetected': periodicityDetected, 'holdMeans': holdMeans}
             dill.dump(kwSave, f)
             f.close()
 
@@ -300,7 +333,9 @@ def pulsesTest(**kwargs):
 def pulseExperience(kwargs):
     (signal, timeSamples, t) = modelPulses(**kwargs)
     (alpha, f, A, theta, res, timeSamplesIdsEst) = pulsesParamsEst(signal, **kwargs)[0:6]
-    return alpha, f, A, theta, res, timeSamplesIdsEst
+    noise = np.random.normal(loc=0.0, scale=np.sqrt(np.sum(signal ** 2) / signal.size), size=signal.shape)
+    (alphaN, fN, AN, thetaN, resN, timeSamplesIdsEstN) = pulsesParamsEst(noise, **kwargs)[0:6]
+    return alpha, f, A, theta, res, timeSamplesIdsEst, alphaN, fN, AN, thetaN, resN, timeSamplesIdsEstN
 
 
 def modelModulated(**kwargs):
@@ -429,7 +464,6 @@ def modTest(**kwargs):
     plt.title('Errors meds')
     figFinal = plotUnder(SNRs, (errF, errR), secondParam=resids, ylabel=('Prony frequency RMSE', 'Spectrogram frequency RMSE'),
               secLabel='Approximation error', xlabel='SNR, dB', labels='Estimation error', secondLabel='Approximation error')
-    import os
     if not (os.path.exists('Out') and os.path.isdir('Out')):
         os.mkdir('Out')
     fName = kwargs.get('fileName')
@@ -588,14 +622,17 @@ def main():
     matplotlib.rc('font', family='Times New Roman', size=12)
     Fs = 2000
     ampl = 1
-    decay = 10
+    decay = 50
     t = genTime(maxTime=1, Fs=Fs)
     dFmax=2
     freq = np.linspace(start=0, stop=dFmax, num=t.size)
     plotGraphs=0
     roughFreq = (50, 200)
     kwargs = {'Fs': Fs, 'SNRvals': np.arange(15, -12.5, -0.5), 'carrier': 100, 'plotGraphs': plotGraphs, 'experiences': 104, 'processes': 8, 'asyncLoop': True}
-    kwargs.update({'roughFreqs': roughFreq, 'formFactor': (64, 128), 'hold': 0, 'secondsNum': (0.075, 0.025), 'percentOverlap': 75})
+    kwargs.update({'roughFreqs': roughFreq, 'formFactor': 128, 'hold': 0, 'secondsNum': (0.075, 0.025), 'percentOverlap': 75})  # (64, 128)
+    # kwargs.update({'paramNames': ['amplitude', 'decay', 'timeSamples'], 'percentDeviation': [100, 50, 0]})
+    # kwargs.update({'paramNames': 'amplitude', 'percentDeviation': 100})
+    kwargs.update({'writeAudio': True})
 
    # modTest(Fs=Fs, t=1, SNRvals=np.arange(4, -16.5, -0.5), fileName='linear02AM0.pkl',
             #carrier=100, FMfreq=freq, FMdepth=0.1, AMfreq=5, AMdepth=0.0, plotGraphs=plotGraphs, experiences=102, processes=6, asyncLoop=True)  # 6, -12
