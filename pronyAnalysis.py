@@ -145,8 +145,8 @@ def pronyDecomp(signal, order, epsilon=0, Fs=1):
     im = np.imag(h)
     alpha = np.log(np.abs(z))/dt
     f = np.arctan(np.imag(z)/np.real(z))/(2*np.pi*dt)
-    A = np.abs(h).transpose()
-    theta = np.arctan(im/re).transpose()
+    A = np.abs(h).transpose().squeeze()
+    theta = np.arctan(im/re).transpose().squeeze()
 
     return alpha, f, A, theta, ar_res
 
@@ -513,6 +513,8 @@ def thresholdRepreProny(representation, fVect, **kwargs):
 
         fCurr = np.array(fCurr)
         alphaCurr = np.array(alphaCurr)
+        Acurr = np.array(Acurr)
+        thetaCurr = np.array(thetaCurr)
         residCurr = residCurr.transpose()
         coefficientCurr = coefficientCurr.transpose()
         for bi in range(tWinIndexes.shape[0]):
@@ -522,8 +524,8 @@ def thresholdRepreProny(representation, fVect, **kwargs):
                 fCurr[bi, 1] = fVectCut[ai]
             f[appropriateIdxs] = fCurr[bi, 1]
             alpha[appropriateIdxs] = alphaCurr[bi, 1]
-            #A[appropriateIdxs] = Acurr[1]
-            #theta[appropriateIdxs] = thetaCurr[1]
+            A[appropriateIdxs] = Acurr[bi, 1]
+            theta[appropriateIdxs] = thetaCurr[bi, 1]
             resid[appropriateIdxs] = residCurr[0, bi]
             coefficient[appropriateIdxs] = coefficientCurr[0, bi]
         pass
@@ -570,6 +572,10 @@ def pronyParamsEst(signal, **kwargs):
     if type(secondsNum) in [tuple, list]:
         kwargs.update({'secondsNum': secondsNum[0]})
         secondsNum = secondsNum[-1]
+    periodsNum = kwargs.get('periodsNum')
+    if type(periodsNum) in [tuple, list]:
+        kwargs.update({'periodsNum': periodsNum[0]})
+        periodsNum = periodsNum[-1]
     iterations = kwargs.get('iterations', 0)
     (lowFreq, highFreq) = kwargs.get('roughFreqs', (kwargs.get('lowFreq', 70), kwargs.get('highFreq', 150)))
     if kwargs.get('roughFreqs', 0) and iterations:  # Get preliminary track to estimate frequency borders.
@@ -589,6 +595,7 @@ def pronyParamsEst(signal, **kwargs):
         kwargs.update({'roughFreqs': (fVectNew[idxMin], fVectNew[idxMax]), 'formFactor': formFactor[1:]})
         kwargs.update({'iterations': iterations-1})  # Subtract recursive iterations counter.
         kwargs.update({'secondsNum': secondsNum})
+        kwargs.update({'periodsNum': periodsNum})
         (alpha, f, A, theta, res, coefficient, representation1, fVectNew1) = pronyParamsEst(signal, **kwargs)
         return alpha, f, A, theta, res, coefficient, representation, fVectNew
     else:

@@ -107,6 +107,7 @@ def expPulses(t, timeSamples, decay, amplitude, randomArgs=None):
     if not randomArgs is None and not randomArgs.get('paramNames') is None:
         paramArgs = {'timeSamples': timeSamples, 'decay': decay, 'amplitude': amplitude}
         pa.randomDeviation(paramArgs, **randomArgs)  # Update variables contained in parameters dictionary.
+        (timeSamples, decay, amplitude) = (paramArgs.get('timeSamples'), paramArgs.get('decay'), paramArgs.get('amplitude'))
     for ai in range(timeSamples.size):
         pulse = amplitude[ai]*np.exp(-decay[ai]*t)
         realTimeSamples[ai] = closeInVect(t, timeSamples[ai])[1]
@@ -252,7 +253,7 @@ def modelPulses(**kwargs):
     t = makeNP(kwargs.get('t', 1))
     Fs = kwargs.get('Fs', 1)
     t = genTime(maxTime=t, Fs=Fs) if t.size == 1 else t
-    timeSituations = np.arange(start=kwargs.get('start', t[0]), stop=kwargs.get('stop', t[-1]), step=kwargs.get('step', (t[-1]-t[0])/10))
+    timeSituations = np.arange(start=kwargs.get('start', t[0]), stop=kwargs.get('stop', t[-1]), step=kwargs.get('step', (t[-1]-t[0])/20))
     timeSamples = closeInVect(t, timeSituations)[0]
     envel = expPulses(t, timeSamples, decay, ampl, kwargs)[0] - np.max(ampl)
     ams = AMsign(t, kwargs.get('carrier', 0.1*Fs), envel, depth=1)
@@ -271,10 +272,12 @@ def pulsesTest(**kwargs):
     holdMeans = []
     residMeans = []
     residNoiseMeans = []
+    peakDifList = []
     periodicityDetected = np.zeros_like(SNRs, dtype='float64')
     for ai, SNR in enumerate(kwargs.get('SNRvals', [np.inf])):
         residMeans.append(np.zeros_like(np.arange(kwargs.get('experiences', 1)), dtype='float64'))
         residNoiseMeans.append(np.zeros_like(np.arange(kwargs.get('experiences', 1)), dtype='float64'))
+        peakDifList.append([])
         kwargs.update({'SNR': SNR})
         (signal, timeSamples, t) = modelPulses(**kwargs)  # Get model parameters for comparison.
         if not kwargs.get('processes') is None:
@@ -299,6 +302,7 @@ def pulsesTest(**kwargs):
             residNoiseMeans[ai][bi] = np.nanmean(resN)
             # Periodicity detection
             peakDist = np.diff(timeSamplesIdsEst)
+            peakDifList[ai].append(peakDist)
             periodicityDetected[ai] += int(np.std(peakDist)/np.mean(peakDist) < kwargs.get('periodicityDetectionHold', 0.25))
             # Pitch estimation
             errAlph[ai] += pa.rms(alpha-makeNP(kwargs.get('decay', 0)))
@@ -325,7 +329,7 @@ def pulsesTest(**kwargs):
             fName = 'pulsesEstimation.pkl'
         with open(os.path.join('Out', fName), "wb") as f:
             kwSave = {'SNRs': SNRs, 'errAlph': errAlph, 'errF': errF, 'errT': errT, 'errPer': errPer, 'resids': resids,
-                      'periodicityDetected': periodicityDetected, 'holdMeans': holdMeans}
+                      'periodicityDetected': periodicityDetected, 'holdMeans': holdMeans, 'peakDifList': peakDifList}
             dill.dump(kwSave, f)
             f.close()
 
@@ -342,7 +346,8 @@ def modelModulated(**kwargs):
     t = makeNP(kwargs.get('t', 1))
     Fs = kwargs.get('Fs', 1)
     t = genTime(maxTime=t, Fs=Fs) if t.size == 1 else t
-    (FMcomp, freq) = frequencyModulated(kwargs.get('FMfreq', 0), t, f0=kwargs.get('carrier', 0.1*Fs), depth=kwargs.get('FMdepth', 0), phi0=0, linear=kwargs.get('linear', False))
+    (FMcomp, freq) = frequencyModulated(kwargs.get('FMfreq', 0), t, f0=kwargs.get('carrier', 0.1*Fs), depth=kwargs.get('FMdepth', 0),
+                                        phi0=kwargs.get('phi0', 0), linear=kwargs.get('linear', False))
     ams = AMsign(t, FMcomp, kwargs.get('AMfreq', 0), depth=kwargs.get('AMdepth', 0))
     signalTupl = pa.awgn(ams[0], SNRdB=makeNP(kwargs.get('SNR', np.inf)))
     return (signalTupl[0], t, freq)
@@ -628,18 +633,21 @@ def main():
     freq = np.linspace(start=0, stop=dFmax, num=t.size)
     plotGraphs=0
     roughFreq = (50, 200)
-    kwargs = {'Fs': Fs, 'SNRvals': np.arange(15, -12.5, -0.5), 'carrier': 100, 'plotGraphs': plotGraphs, 'experiences': 104, 'processes': 8, 'asyncLoop': True}
-    kwargs.update({'roughFreqs': roughFreq, 'formFactor': 128, 'hold': 0, 'secondsNum': (0.075, 0.025), 'percentOverlap': 75})  # (64, 128)
+    kwargs = {'Fs': Fs, 'SNRvals': np.arange(-2.5, -5.5, -0.5), 'carrier': 100, 'plotGraphs': plotGraphs, 'experiences': 5, 'processes': 5, 'asyncLoop': True}
+    kwargs.update({'roughFreqs': roughFreq, 'formFactor': 128, 'hold': 0, 'secondsNum': 0.025, 'percentOverlap': 75})  # (64, 128)(0.075, 0.02)
     # kwargs.update({'paramNames': ['amplitude', 'decay', 'timeSamples'], 'percentDeviation': [100, 50, 0]})
     # kwargs.update({'paramNames': 'amplitude', 'percentDeviation': 100})
-    kwargs.update({'writeAudio': True})
+    kwargs.update({'writeAudio': True, 'hold': 0})
+    # kwargs.update({'start': 1, 'stop': 2, 't': 5, 'decay': decay, 'SNR': -5, 'fileName': 'aFewPulses.pkl'})
+    # o = modelPulses(**kwargs)
+    # (alpha, f, A, theta, res, timeSamplesIdsEst) = pulsesParamsEst(o[0], **kwargs)[0:6]
 
    # modTest(Fs=Fs, t=1, SNRvals=np.arange(4, -16.5, -0.5), fileName='linear02AM0.pkl',
             #carrier=100, FMfreq=freq, FMdepth=0.1, AMfreq=5, AMdepth=0.0, plotGraphs=plotGraphs, experiences=102, processes=6, asyncLoop=True)  # 6, -12
     #modTest(Fs=Fs, t=1, SNRvals=np.arange(-3, -16.5, -0.5), fileName='AMf5d025.pkl',
            # carrier=100, FMfreq=5, FMdepth=0.1, AMfreq=5, AMdepth=0.25, plotGraphs=plotGraphs, experiences=1)  # 6, -12
     #return
-    pulsesTest(decay=decay, t=5, fileName='pulses_104trials', **kwargs)
+    pulsesTest(decay=decay, t=5, fileName='pulses_5trials__1.4hold.pkl', **kwargs)
     return
     modTest(t=1, fileName='pulses_104trials.pkl', FMfreq=5, FMdepth=0.1, AMfreq=5, AMdepth=0.25, **kwargs)  # 6, -12
     # np.hstack((np.arange(4, -5, -1), np.arange(-5, -7.5, -0.5), np.arange(-8, -22, -2)))
