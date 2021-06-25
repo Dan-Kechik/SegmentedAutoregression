@@ -217,6 +217,7 @@ def plotRepresentation(t, representation, fVect, freq=None, spectrum=None):
         ax_frequency.plot(fVect, spectrum)
         ax_specWav = fig4.add_subplot(122)
     extent = t[0], t[-1], fVect[0], fVect[-1]
+    representation = pa.getReplesentEnvelope(representation)
     ax_specWav.imshow(np.flipud(np.abs(representation)), extent=extent)
     ax_specWav.axis('auto')
     if not freq is None:

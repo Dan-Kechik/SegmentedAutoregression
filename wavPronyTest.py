@@ -14,13 +14,13 @@ import dill
 from multiprocessing import Pool
 import datetime as dtm
 
-RootFold = r'D:\Repository\Phase\SegmentedAutoregression\In'
+RootFold = r'D:\Repository\SegmentedAutoregression\In'
 downsampl = 50
 upCoefficient = 1  # Divide Fs to translate spectrum
 plotGraphs = 1
 targetedFrequency = 10
-roughFreq = (1, 25)
-processesNumber=0
+roughFreq = (2, 25)
+processesNumber=6
 
 def main():
     fList = os.listdir(RootFold)
@@ -29,7 +29,7 @@ def main():
     for ai in fList:
         if ai.endswith('.wav'):
             wavList.append(ai)
-    # wavList=['22.wav']
+    # wavList=['2.wav']
     if processesNumber:
         with Pool(processesNumber) as pool:
             for r in pool.imap_unordered(processSingleFile, wavList):
@@ -49,7 +49,7 @@ def processSingleFile(currentFile):
 
         fileName = currentFile.rstrip('.wav')
         csvName = os.path.join(RootFold, fileName+'.csv')
-        if os.path.exists(os.path.join(RootFold, csvName)):
+        if os.path.exists(csvName):
             realFreq = pandas.read_csv(csvName).to_numpy(dtype='float64')
             csvTime = realFreq[:, 0]
             realFreq = realFreq[:, 1] / 2
@@ -58,24 +58,81 @@ def processSingleFile(currentFile):
             tachoTime = np.array([i.total_seconds() for i in tachoTime])
 
         kwargs = {'Fs': Fs2*upCoefficient, 'plotGraphs': plotGraphs}
-        kwargs.update({'roughFreqs': roughFreq, 'iterations': 1, 'formFactor': (32, 64), 'hold': 0})
-        (alpha, f, A, theta, res, coefficient, representation, fVectNew) = pa.pronyParamsEst(resampled_x, percentOverlap=75, df=1, **kwargs)  #secondsNum=0.005 , secondsNum=(1, 0.3)
+        kwargs.update({'roughFreqs': roughFreq, 'iterations': 0, 'formFactor': (32, 64), 'hold': 0, 'secondsNum': (1.5, 0.5)}) # 'formFactor': (64, 512) #'secondsNum': (3, 0.5)   'periodsNum': (45, 5)
+        (alpha, f, A, theta, res, coefficient, representation, fVectNew) = pa.pronyParamsEst(resampled_x, percentOverlap=95, df=1, **kwargs)  #secondsNum=0.005 , secondsNum=(1, 0.3)
         print('Estimated track')
-        resampled_x = resampled_x[0:f.size]
-        resampled_t = resampled_t[0:f.size]
+        resampled_x = resampled_x[np.logical_not(np.isnan(f))]
+        resampled_t = resampled_t[np.logical_not(np.isnan(f))]
+        f = f[np.logical_not(np.isnan(f))]
         if plotGraphs:
-            fig = sm.plotRepresentation(resampled_t, representation, fVectNew, roughFreq)
+            (representation, t0, fVectNew) = pa.DFTbank(resampled_x, rect=2, level=0.5, Fs=Fs2 * upCoefficient, df=0.2, freqLims = roughFreq, formFactor = 1024)
+            figRough = sm.plotRepresentation(resampled_t, representation, fVectNew, roughFreq)
             if os.path.exists(csvName):
-                fig.axes[0].plot(tachoTime, realFreq*upCoefficient, color='r', label='Tacho track')
-            fig.axes[0].plot(resampled_t[0:f.size], f[0:resampled_t.size], label='Estimated track')
+                figRough.axes[0].plot(tachoTime, realFreq*upCoefficient, color='r', label='Tacho track')
+            figRough.axes[0].plot(resampled_t[0:f.size], f[0:resampled_t.size], label='Rough track')  # Estimated
+            print('Plotted estimated track')
+
+        '''''
+        #(_, filtratedTrack) = pa.fftFiltrate(f, (0, 5), Fs=Fs2)
+        #b, a = butter_lowpass(5, Fs2, order=4)
+        #filtratedTrack = filtfilt(b, a, f)
+        n = 5000
+        filtratedTrack = pandas.Series(f).rolling(window=n).mean().iloc[n - 1:].values
+        resampled_x = resampled_x[(round(n/2)-1):-round(n/2)]
+        resampled_t = resampled_t[(round(n/2)-1):-round(n/2)]
+        filtratedTrack = pa.medianSmooth(filtratedTrack, t=resampled_t, secondsWidth=0.5)
+        resampled_x = resampled_x[~np.isnan(filtratedTrack)]
+        resampled_t = resampled_t[~np.isnan(filtratedTrack)]
+        if resampled_x.size == 0:
+            return ''
+        filtratedTrack = filtratedTrack[~np.isnan(filtratedTrack)]
+        if plotGraphs:
+            figRough.axes[0].plot(resampled_t, filtratedTrack, label='Smoothed rough')
+            figRough.axes[0].legend()
+        '''''
+        fSmooth = pa.medianSmooth(f, t=resampled_t, secondsWidth=1.5)
+        resampled_x = resampled_x[~np.isnan(fSmooth)]
+        resampled_t = resampled_t[~np.isnan(fSmooth)]
+        if resampled_x.size == 0:
+            return ''
+        fSmooth = fSmooth[~np.isnan(fSmooth)]
+        try:
+            validIdxs, idx = validateTrack(fSmooth, secondsLen=5, t=resampled_t)
+        except:
+            idx=np.array([])
+        if idx.size:
+            indexes = validIdxs[idx]
+        else:
+            indexes = np.arange(0, resampled_x.size)
+        indexes = np.arange(indexes[0], indexes[1])
+        resampled_x = resampled_x[indexes]
+        resampled_t = resampled_t[indexes]
+
+        polyCoeffs = np.polyfit(resampled_t[indexes], fSmooth[indexes], 23)
+        fSmooth0 = np.polyval(polyCoeffs, resampled_t[indexes])
+        figRough.axes[0].plot(resampled_t, fSmooth[indexes], label='Smooth')
+        figRough.axes[0].plot(resampled_t, fSmooth0, label='polyval')
+
+        equiPhased, equiPhasedTime = pa.trackResample(resampled_x, track=fSmooth0 / upCoefficient, t=resampled_t, targetedF=15)
+        resampled_x = equiPhased
+        resampled_t = equiPhasedTime
+        kwargs.update({'roughFreqs': (10, 20), 'iterations': 1, 'formFactor': (32, 64), 'hold': 0, 'secondsNum': (1, 0.5)})
+        (alpha, f, A, theta, res, coefficient, representation, fVectNew) = pa.pronyParamsEst(resampled_x, percentOverlap=95, df=1, **kwargs)
+        if plotGraphs:
+            (representation, t0, fVectNew) = pa.DFTbank(resampled_x, rect=2, level=0.5, Fs=Fs2 * upCoefficient, df=0.2, freqLims = roughFreq, formFactor = 1024)
+            fig = sm.plotRepresentation(t0, representation, fVectNew, roughFreq)
+            fig.axes[0].plot(resampled_t[0:f.size], f[0:resampled_t.size], label='Accurate track')
             print('Plotted estimated track')
 
         fSmooth = pa.medianSmooth(f, t=resampled_t, secondsWidth=0.5)
         resampled_x = resampled_x[~np.isnan(fSmooth)]
         resampled_t = resampled_t[~np.isnan(fSmooth)]
+        if resampled_x.size == 0:
+            return ''
         fSmooth = fSmooth[~np.isnan(fSmooth)]
         print('Smoothed track')
         if plotGraphs:
+            # fig = sm.plotRepresentation(resampled_t, representation, fVectNew, roughFreq)
             fig.axes[0].plot(resampled_t, fSmooth, label='Smoothed track')
             fig.axes[0].set_xlabel('Time, sec')
             fig.axes[0].set_ylabel('Frequency, Hz')
@@ -89,13 +146,22 @@ def processSingleFile(currentFile):
         resampled_t = kws['resampled_t']
         fSmooth = kws['fSmooth']
         '''''
-        validIdxs, idx = validateTrack(fSmooth, secondsLen=5, t=resampled_t)
+        try:
+            validIdxs, idx = validateTrack(fSmooth, secondsLen=5, t=resampled_t)
+        except:
+            idx=np.array([])
         if idx.size:
             indexes = validIdxs[idx]
         else:
             indexes = np.arange(0, resampled_x.size)
         indexes = np.arange(indexes[0], indexes[1])
-        equiPhased, equiPhasedTime = pa.trackResample(resampled_x[indexes], track=fSmooth[indexes]/upCoefficient, t=resampled_t[indexes], targetedF=targetedFrequency)
+
+        polyCoeffs = np.polyfit(resampled_t[indexes], fSmooth[indexes], 60)
+        fSmooth0 = np.polyval(polyCoeffs, resampled_t[indexes])
+        fig.axes[0].plot(resampled_t[indexes], fSmooth[indexes], label='Smooth')
+        fig.axes[0].plot(resampled_t[indexes], fSmooth0, label='polyval')
+
+        equiPhased, equiPhasedTime = pa.trackResample(resampled_x[indexes], track=fSmooth0/upCoefficient, t=resampled_t[indexes], targetedF=targetedFrequency)
         print('Resampled signal')
         if plotGraphs:
             #(alphaR, fR, AR, thetaR, resR, coefficientR, representationR, fVectNewR) = pa.pronyParamsEst(equiPhased, secondsNum=0.05, percentOverlap=75, **kwargs)  #secondsNum=0.005 periodsNum=10
@@ -131,6 +197,7 @@ def processSingleFile(currentFile):
                 fl.close()
             '''
 
+            figRough.savefig(os.path.join('Out', 'resampledData', fileName+'_spectrogramRough.png'), bbox_inches='tight')
             fig.savefig(os.path.join('Out', 'resampledData', fileName+'_spectrogram.png'), bbox_inches='tight')
             figR.savefig(os.path.join('Out', 'resampledData', fileName+'_spectrogram_resampled.png'), bbox_inches='tight')
             figSpec.savefig(os.path.join('Out', 'resampledData', fileName+'_spectrum.png'), bbox_inches='tight')
