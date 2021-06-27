@@ -310,9 +310,9 @@ def DFTbank(signal, Fs=1, df=None, fVectIni=None, rect=0, level=0.5, mirrorLen=0
         fVectIni = np.fft.rfftfreq(signal.size, 1 / Fs)
     fVect = np.unique(SM.closeInVect(fVectIni, np.arange(start=0, stop=Fs / 2, step=df))[0])
     if not freqLims is None:
-        fVect = fVect[fVect<freqLims[-1]]
+        fVect = fVect[fVect<=freqLims[-1]]
         if len(freqLims) == 2:
-            fVect = fVect[fVect > freqLims[0]]
+            fVect = fVect[fVect >= freqLims[0]]
     spec = np.fft.rfft(signal)[0:len(fVectIni)] / signal.size  # Get one-sided FFT
     representation = np.zeros((fVect.size, signal.size))  # Columns are freqs, rows are time coefficients.
     if fVect[0] == 0:  # Consider zero frequency.
