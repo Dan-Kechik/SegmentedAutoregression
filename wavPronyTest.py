@@ -58,7 +58,7 @@ def processSingleFile(currentFile):
             tachoTime = np.array([i.total_seconds() for i in tachoTime])
 
         kwargs = {'Fs': Fs2*upCoefficient, 'plotGraphs': plotGraphs}
-        kwargs.update({'roughFreqs': roughFreq, 'iterations': 1, 'formFactor': (32, 64), 'hold': 0, 'secondsNum': 0.05})
+        kwargs.update({'roughFreqs': roughFreq, 'iterations': 1, 'formFactor': (32, 64), 'hold': 0, 'periodsNum': (5, 1)})
         (alpha, f, A, theta, res, coefficient, representation, fVectNew) = pa.pronyParamsEst(resampled_x, percentOverlap=75, df=1, **kwargs)  #secondsNum=0.005 , secondsNum=(1, 0.3)
         print('Estimated track')
         resampled_x = resampled_x[0:f.size]

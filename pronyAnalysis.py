@@ -298,6 +298,7 @@ def mirrorExtend(signal, mirrorLen=0):
 
 
 def DFTbank(signal, Fs=1, df=None, fVectIni=None, rect=0, level=0.5, mirrorLen=0, freqLims=None, formFactor=16, **kwargs):
+    minFreq = 5
     (signal, num, numEnd) = mirrorExtend(signal, mirrorLen=mirrorLen)
     if signal.size % 2 == 1:
         signal = signal[1:]
@@ -314,26 +315,43 @@ def DFTbank(signal, Fs=1, df=None, fVectIni=None, rect=0, level=0.5, mirrorLen=0
         if len(freqLims) == 2:
             fVect = fVect[fVect >= freqLims[0]]
     spec = np.fft.rfft(signal)[0:len(fVectIni)] / signal.size  # Get one-sided FFT
+    oneSidedVector = np.fft.rfftfreq(signal.size, 1 / Fs)
+    fVect = np.hstack((fVect[fVect == 0], SM.makeNP(1), fVect[fVect >= minFreq]))
     representation = np.zeros((fVect.size, signal.size))  # Columns are freqs, rows are time coefficients.
     if fVect[0] == 0:  # Consider zero frequency.
         start=1
         representation[0, :] += np.mean(signal)
     else:
         start=0
+    #fig = plt.figure()
+    #grid = matplotlib.gridspec.GridSpec(1, 1)
+    #ax_specWav = fig.add_subplot(grid[0])
     for ai in range(start, fVect.size):
         # Obtain analysis window and it's width
         psi = windMEXH(fVect[ai], t, formFactor)[0]
         (windSpec, freqz) = wavSpectrum(psi, rect=rect, level=level, fVectIni=fVectIni, Fs=Fs)[0:2]
+        if fVect[ai] == 3:
+            psi = windMEXH(fVect[ai], t, 4)[0]
+            (windSpec, freqz) = wavSpectrum(psi, rect=2, level=0.5, fVectIni=fVectIni, Fs=Fs)[0:2]
+        if fVect[ai] == 1:
+            windSpec = windSpec * 0
+            windSpec[np.logical_and(freqz > -minFreq, freqz < minFreq)] = 1
         # Shift the spectrum by needed frequencies and multiply by conjugated window spectrum.
-        startIdx = np.nonzero(freqz == 0)[0][0] - np.nonzero(fVectIni == fVect[ai])[0][0]
+        try:
+            startIdx = np.nonzero(freqz == 0)[0][0] - np.nonzero(fVectIni == fVect[ai])[0][0]
+        except:
+            startIdx = np.nonzero(freqz == 0)[0][0] - np.argmin(np.abs(fVectIni - fVect[ai]))
         stopIdx = startIdx + fVectIni.size
         windSpec[np.arange(start=startIdx, stop=stopIdx, step=1, dtype='int')] *= spec  # Windowed spectrum.
         # Drop window function coefficients.
         windSpec[np.arange(start=0, stop=startIdx, step=1, dtype='int')] = 0
         windSpec[np.arange(start=stopIdx, stop=windSpec.size, step=1, dtype='int')] = 0
-        oneSidedSpectrum = np.zeros_like(np.fft.rfftfreq(signal.size, 1 / Fs), dtype='complex')
+        oneSidedSpectrum = np.zeros_like(oneSidedVector, dtype='complex')
+        oneSidedSpectrum[0:(stopIdx-startIdx)] = windSpec[startIdx:stopIdx]
+        oneSidedSpectrum[oneSidedVector<=1] = 0
         oneSidedSpectrum[0:(stopIdx-startIdx)] = windSpec[startIdx:stopIdx]
         representation[ai, :] = np.fft.irfft(oneSidedSpectrum)*t.size
+        #ax_specWav.plot(np.fft.rfftfreq(signal.size, 1 / Fs), np.abs(oneSidedSpectrum))
 
     if mirrorLen:
         representation = representation[:, num[0]:numEnd[0]+num[0]+2]
